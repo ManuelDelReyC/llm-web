@@ -33,5 +33,6 @@ echo ""
   --metrics \
   --perf \
   -ctk q8_0 \
-  -ctv q8_0
+  -ctv q8_0 \
+  --jinja
 
