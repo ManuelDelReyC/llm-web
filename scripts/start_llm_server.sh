@@ -1,14 +1,25 @@
 #!/bin/bash
 # Script Inicio llama.cpp optimizado para HP Elitedesk 600 G4 + GTX 1060 3GB
 
-MODELO="$HOME/Proyectos/llama/models/qwen2.5-coder-7b-instruct-q4_k_m-00001-of-00002.gguf"
-NGL="${1:-13}"
-CTX="${2:-6144}"
+set -e
+
+MODELO="$HOME/Proyectos/llama/models/Qwen3-14B-Q5_K_M.gguf"
+NGL="${1:-99}"
+CTX="${2:-8192}"
+
+LLAMA_SERVER="$HOME/Proyectos/llama/src/llama.cpp/build/bin/llama-server"
 
 # Verifica que el modelo existe
 if [ ! -f "$MODELO" ]; then
     echo "❌ Modelo no encontrado: $MODELO"
     echo "Uso: ./start_llm_server.sh [ruta_modelo] [capas_gpu] [contexto]"
+    exit 1
+fi
+
+
+if [ ! -x "$LLAMA_SERVER" ]; then
+    echo "❌  llama-server no encontrado:"
+    echo "$LLAMA_SERVER"
     exit 1
 fi
 
