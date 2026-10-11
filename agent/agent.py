@@ -90,6 +90,10 @@ SYSTEM_PROMPT = (
     "indícalo en lugar de inventar una respuesta.\n" 
     "6. Distingue entre información obtenida de un snippet de búsqueda " 
     "y contenido leído directamente de una página.\n\n"
+    "7. Cuando el usuario pregunte por información actual, reciente, "
+    "última o vigente, no elijas automáticamente una página histórica "
+    "de una versión anterior. Busca y verifica una fuente que indique "
+    "explícitamente el estado actual o la versión más reciente.\n"
 
     "LLAMADAS DE HERRAMIENTA:\n" 
     "Las llamadas deben ser un objeto JSON con esta estructura:\n" 
@@ -151,11 +155,7 @@ def call_llm(messages: list[dict]) -> dict:
 
 
 def extract_tool_call(content: str):
-    """
-    Detecta una llamada de herramienta generada por el modelo.
-
-    Acepta JSON puro y JSON dentro de un bloque Markdown.
-    """
+    """Extrae una llamada de herramienta desde la respuesta del modelo."""
 
     if not content:
         return None
@@ -163,28 +163,55 @@ def extract_tool_call(content: str):
     text = content.strip()
 
     debug(
-        "Contenido recibido del modelo:"
-    )
-    debug(
-        repr(text)
+        "Buscando tool call en contenido:\n"
+        f"{text}"
     )
 
-    candidates = [text]
+    # ---------------------------------------------------------
+    # 1. Intentar interpretar todo el contenido como JSON.
+    # ---------------------------------------------------------
+    try:
+        data = json.loads(text)
 
-    # JSON dentro de ```json ... ```
-    if text.startswith("```") and text.endswith("```"):
-        lines = text.splitlines()
+        if isinstance(data, dict):
+            name = data.get("name")
+            arguments = data.get("arguments")
 
-        if len(lines) >= 3:
-            candidates.append(
-                "\n".join(lines[1:-1]).strip()
-            )
+            if name in ("web_search", "fetch_url"):
+                if not isinstance(arguments, dict):
+                    arguments = {}
 
-    for candidate in candidates:
+                debug(
+                    "JSON detectado | "
+                    f"name={name} | arguments={arguments}"
+                )
+
+                return {
+                    "name": name,
+                    "arguments": arguments,
+                }
+
+    except json.JSONDecodeError:
+        pass
+
+    # ---------------------------------------------------------
+    # 2. Buscar un objeto JSON dentro de texto adicional.
+    #
+    # Ejemplo:
+    #
+    #   Entendido...
+    #   {"name":"web_search","arguments":{"query":"Python"}}
+    # ---------------------------------------------------------
+    decoder = json.JSONDecoder()
+
+    for index, char in enumerate(text):
+        if char != "{":
+            continue
+
+        candidate = text[index:]
 
         try:
-            data = json.loads(candidate)
-
+            data, _ = decoder.raw_decode(candidate)
         except json.JSONDecodeError:
             continue
 
@@ -194,54 +221,26 @@ def extract_tool_call(content: str):
         name = data.get("name")
         arguments = data.get("arguments")
 
-        debug(
-            f"JSON detectado | name={name} | arguments={arguments}"
-        )
-
-        if name not in (
-            "web_search",
-            "fetch_url",
-        ):
+        if name not in ("web_search", "fetch_url"):
             continue
 
         if not isinstance(arguments, dict):
-            continue
+            arguments = {}
 
-        if name == "web_search":
+        debug(
+            "JSON encontrado dentro de texto | "
+            f"name={name} | arguments={arguments}"
+        )
 
-            query = arguments.get("query")
+        return {
+            "name": name,
+            "arguments": arguments,
+        }
 
-            if not isinstance(query, str):
-                continue
-
-            query = query.strip()
-
-            if not query:
-                continue
-
-            return name, {
-                "query": query,
-            }
-
-        if name == "fetch_url":
-
-            url = arguments.get("url")
-
-            if not isinstance(url, str):
-                continue
-
-            url = url.strip()
-
-            if not url:
-                continue
-
-            return name, {
-                "url": url,
-            }
-
-    debug(
-        "No se detectó ninguna llamada de herramienta."
-    )
+    # ---------------------------------------------------------
+    # 3. No se encontró ninguna llamada.
+    # ---------------------------------------------------------
+    debug("No se detectó ninguna llamada de herramienta.")
 
     return None
 
@@ -488,48 +487,38 @@ def format_search_results(results: dict) -> str:
 def format_fetched_page(page: dict) -> str:
     """Convierte el resultado de fetch_url en texto."""
 
+    
     if not isinstance(page, dict):
-
         return (
             "fetch_url devolvió un formato inesperado:\n"
             f"{json.dumps(page, ensure_ascii=False)}"
         )
 
     if page.get("error"):
-
         return (
             "Se produjo un error al leer la página:\n"
             f"{page['error']}"
         )
 
-    url = page.get(
-        "url",
-        "",
-    )
-
-    content_type = page.get(
-        "content_type",
-        "",
-    )
-
-    content = page.get(
-        "content",
-        "",
-    )
+    url = page.get("url", "")
+    content_type = page.get("content_type", "")
+    content = page.get("content", "")
 
     if not content:
-
         return (
             "La página se descargó correctamente, "
             "pero no contiene texto legible."
         )
 
     return (
-        "Contenido de la página web:\n\n"
+        "=== CONTENIDO LEÍDO DIRECTAMENTE DE LA PÁGINA ===\n\n"
         f"URL: {url}\n"
         f"Tipo: {content_type}\n\n"
-        f"{content}"
-    )
+        f"{content}\n\n"
+        "=== FIN DEL CONTENIDO DE LA PÁGINA ==="
+    )    
+        
+    
 
 
 def handle_tool_call(
@@ -752,25 +741,74 @@ def ask_agent(user_query: str) -> str:
             if name == "web_search":
 
                 instruction = (
+                    "=== RESULTADOS DE BÚSQUEDA ===\n\n"
                     f"{result_text}\n\n"
-                    "Utiliza estos resultados para responder "
-                    "a la pregunta original. "
-                    "Si necesitas verificar o leer una página "
-                    "concreta, DEBES utilizar fetch_url con "
-                    "una de las URLs encontradas. "
-                    "No vuelvas a usar web_search para la "
-                    "misma pregunta."
+                    "=== FIN DE RESULTADOS DE BÚSQUEDA ===\n\n"
+
+                    "Los resultados anteriores son pistas de búsqueda. "
+                    "No los trates como contenido completo de las páginas.\n\n"
+
+                    "Analiza la pregunta original y selecciona la fuente "
+                    "más adecuada para responder.\n\n"
+
+                    "Si necesitas datos concretos, actuales o verificables, "
+                    "utiliza fetch_url para leer una página relevante, "
+                    "preferentemente una fuente oficial o primaria.\n\n"
+
+                    "Cuando el usuario pregunte por una versión concreta "
+                    "de un programa, prefiere una página oficial específica "
+                    "de esa versión cuando esté disponible.\n\n"
+
+                    "Distingue entre la versión de la documentación y la "
+                    "versión del programa descrito. Una ruta genérica de "
+                    "documentación no implica que la página describa la "
+                    "versión más reciente del programa.\n\n"
+
+                    "Si la pregunta pide información actual, comprueba "
+                    "que la fuente permite determinar el estado actual. "
+                    "No elijas automáticamente una página histórica "
+                    "cuando se pregunta por la versión vigente.\n\n"
+
+                    "Si los resultados contienen varias versiones, "
+                    "selecciona la fuente que permita identificar "
+                    "claramente la versión pertinente.\n\n"
+
+                    "No inventes datos ni deduzcas que una fuente oficial "
+                    "contiene errores sin evidencias concretas.\n\n"
+
+                    "No vuelvas a utilizar web_search para la misma "
+                    "pregunta. Si necesitas verificar información "
+                    "concreta, utiliza fetch_url."
                 )
 
             else:
 
                 instruction = (
                     f"{result_text}\n\n"
-                    "Utiliza el contenido de esta página para "
-                    "responder a la pregunta original. "
-                    "No vuelvas a solicitar fetch_url para "
-                    "esta misma URL."
+
+                    "Has leído directamente el contenido de la página "
+                    "indicada. Utiliza ese contenido como fuente principal "
+                    "para responder a la pregunta original.\n\n"
+
+                    "Distingue entre los hechos que aparecen explícitamente "
+                    "en la página y tus propias inferencias.\n\n"
+
+                    "Si el usuario pregunta por una versión concreta, "
+                    "comprueba que el contenido leído se refiere a esa "
+                    "versión. No deduzcas la versión del programa "
+                    "únicamente a partir de la URL o de la versión general "
+                    "de la documentación.\n\n"
+
+                    "No añadas datos que no estén respaldados por la "
+                    "información proporcionada. No afirmes que una página "
+                    "contiene errores sin pruebas explícitas.\n\n"
+
+                    "Si el contenido no permite responder con certeza, "
+                    "indícalo explícitamente."
                 )
+
+
+
 
             messages.append(
                 {
