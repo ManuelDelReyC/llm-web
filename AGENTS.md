@@ -18,6 +18,8 @@ of `python3 agent/agent.py`; you must start them yourself.
   `~/Proyectos/llama/models/*.gguf`. If those paths don't exist, the script
   exits early.
 - **SearXNG → `127.0.0.1:8081`** via Docker Compose in `searxng/`.
+- **Open WebUI → `http://localhost:3000`** (optional) via Docker Compose in
+  `open-webui/`. It talks to the agent API, not directly to llama-server.
 
 ## Commands
 
@@ -37,6 +39,10 @@ python3 agent/agent.py --debug "tu pregunta"   # verbose trace to stderr
 
 # Start the OpenAI-compatible API (needs .venv).
 ./scripts/start_agent_api.sh                  # listens on 127.0.0.1:8090
+
+# Start Open WebUI (optional; needs the API running with API_HOST=0.0.0.0).
+API_HOST=0.0.0.0 ./scripts/start_agent_api.sh  # expose the API to Docker
+./scripts/start_open_webui.sh                  # http://localhost:3000
 ```
 
 There is no test suite or verification step. The only real check is running
@@ -78,12 +84,23 @@ There is no test suite or verification step. The only real check is running
   `SEARXNG_HOST=127.0.0.1`). If you change them, also update the hardcoded
   `SEARXNG_URL` in `web_search.py` and `LLAMA_BASE_URL`/port in `agent.py` /
   `start_llm_server_qwen14b.sh` / `start_llm_server_qwen30b.sh` — these are not
-  wired to `.env`. The API listens on `127.0.0.1:8090` and uses `LLAMA_URL`
-  (default `http://127.0.0.1:8080`) to reach llama-server; edit
-  `scripts/start_agent_api.sh` to change either.
+  wired to `.env`. The API listens on `API_HOST:API_PORT` (default
+  `127.0.0.1:8090`) and uses `LLAMA_URL` (default `http://127.0.0.1:8080`) to
+  reach llama-server; edit `scripts/start_agent_api.sh` or pass env vars to
+  change them.
 - **`fetch_url.py` truncates page text to `MAX_CONTENT_LENGTH` chars**
   (env var, default 12000; invalid values fall back to 12000) and only
   accepts `text/html`, `application/xhtml+xml`, or `text/plain`.
+- **Open WebUI needs the API to listen on `0.0.0.0`.** Docker containers on
+  Linux cannot reach `127.0.0.1` of the host. Start the API with
+  `API_HOST=0.0.0.0 ./scripts/start_agent_api.sh`; the Open WebUI compose
+  uses `host.docker.internal:8090` plus `extra_hosts` to reach it. If your
+  Docker setup does not support `host.docker.internal`, switch the API to
+  `0.0.0.0` and set `OPENAI_API_BASE_URL` to the host's LAN IP or use
+  `network_mode: host` for Open WebUI.
+- **Open WebUI downloads an embedding model on first start.** It fetches
+  `sentence-transformers/all-MiniLM-L6-v2` from Hugging Face, so the UI may
+  be unresponsive for a few minutes until the download finishes.
 
 ## Files to ignore / handle with care
 

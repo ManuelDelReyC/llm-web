@@ -217,8 +217,11 @@ async def chat_completions(request: ChatRequest):
 if __name__ == "__main__":
     import uvicorn
 
+    API_HOST = os.environ.get("API_HOST", "127.0.0.1")
+    API_PORT = int(os.environ.get("API_PORT", "8090"))
+
     uvicorn.run(
         app,
-        host="127.0.0.1",
-        port=8090,
+        host=API_HOST,
+        port=API_PORT,
     )

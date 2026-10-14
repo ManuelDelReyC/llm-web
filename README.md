@@ -15,6 +15,8 @@ a través de una instancia local de [SearXNG](https://docs.searxng.org/).
 | `agent/agent.py` | Bucle principal: envía la pregunta al LLM con dos herramientas (`web_search` y `fetch_url`), ejecuta las llamadas y devuelve la respuesta final. |
 | `agent/web_search.py` | CLI que busca en SearXNG y devuelve los resultados en JSON. |
 | `agent/fetch_url.py` | CLI que descarga una página, la convierte a texto (máx. 12000 caracteres por defecto, configurable con la variable de entorno `MAX_CONTENT_LENGTH`) y devuelve JSON. |
+| `server/main.py` | API compatible con OpenAI (`/v1/chat/completions` y `/v1/models`) que expone el agente. |
+| `open-webui/docker-compose.yml` | Open WebUI en Docker, preconfigurado contra la API propia. |
 
 El agente detecta automáticamente el modelo cargado consultando
 `/v1/models` del servidor, así que **no hay que editar ningún nombre de
@@ -67,6 +69,45 @@ Las herramientas también funcionan por separado:
 python3 agent/web_search.py "consulta"
 python3 agent/fetch_url.py "https://ejemplo.com"
 ```
+
+### 4. API OpenAI-compatible (opcional)
+
+Con el entorno virtual creado en `.venv/`:
+
+```bash
+./scripts/start_agent_api.sh                 # 127.0.0.1:8090
+API_HOST=0.0.0.0 ./scripts/start_agent_api.sh  # expone también a Docker
+```
+
+Prueba rápida:
+
+```bash
+curl -s http://127.0.0.1:8090/v1/models | python3 -m json.tool
+curl -s -X POST http://127.0.0.1:8090/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"¿Qué hora es?"}]}' | python3 -m json.tool
+```
+
+### 5. Interfaz web con Open WebUI (opcional)
+
+Open WebUI se conecta a la API del paso anterior para ofrecer un chat tipo
+ChatGPT en el navegador.
+
+```bash
+# 1. API escuchando en todas las interfaces (necesario para Docker).
+API_HOST=0.0.0.0 ./scripts/start_agent_api.sh
+
+# 2. Arrancar Open WebUI.
+./scripts/start_open_webui.sh
+```
+
+Abre `http://localhost:3000`, crea la cuenta de administrador la primera vez y
+empieza a chatear. Para forzar una búsqueda web, pregunta algo con fecha
+actual; el agente usará `web_search` automáticamente.
+
+> **Nota:** la primera vez que arrancas Open WebUI descarga un modelo de
+> embeddings desde Hugging Face, lo que puede tardar varios minutos. Hasta
+> entonces la interfaz puede no responder.
 
 ## Notas
 

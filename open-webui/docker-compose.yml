@@ -1,0 +1,27 @@
+# Open WebUI configurado contra la API propia de llm-web.
+# La API debe estar accesible desde el contenedor; en Linux usamos
+# host.docker.internal + extra_hosts apuntando al gateway del host.
+# Por eso la API debe arrancarse con API_HOST=0.0.0.0.
+
+name: open-webui
+
+services:
+  open-webui:
+    container_name: open-webui
+    image: ghcr.io/open-webui/open-webui:main
+    restart: always
+    ports:
+      - ${OPEN_WEBUI_PORT:-3000}:8080
+    environment:
+      # Endpoint OpenAI-compatible de nuestra API.
+      - OPENAI_API_BASE_URL=http://host.docker.internal:8090/v1
+      # La API no valida clave en la Fase 2, pero Open WebUI la requiere.
+      - OPENAI_API_KEY=not-needed
+    extra_hosts:
+      # Habilita host.docker.internal en Docker Engine de Linux.
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - open-webui-data:/app/backend/data
+
+volumes:
+  open-webui-data:

@@ -63,11 +63,11 @@ primera fase no marcada como hecha.
 5. Verificación: `curl` al endpoint con una pregunta que fuerce búsqueda
    web; comprobar que responde JSON OpenAI válido.
 
-## Fase 2 — Navegador: Open WebUI
+## Fase 2 — Navegador: Open WebUI ✅ HECHA (2026-10-15)
 
-1. Servicio Open WebUI en Docker (compose nuevo o añadido al de SearXNG).
-2. Configurarlo contra la API de la Fase 1
-   (`http://host.docker.internal:8090/v1` o red interna de Docker).
+1. Servicio Open WebUI en Docker (compose nuevo en `open-webui/`).
+2. Configurado contra la API de la Fase 1 por defecto
+   (`http://host.docker.internal:8090/v1`).
 3. Verificación: chat en el navegador (`http://localhost:3000`) que usa
    búsqueda web cuando se le pregunta algo actual.
 

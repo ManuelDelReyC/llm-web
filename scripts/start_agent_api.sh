@@ -17,4 +17,10 @@ source .venv/bin/activate
 # El backend de llama.cpp se configura con LLAMA_URL (defecto 127.0.0.1:8080).
 export LLAMA_URL="${LLAMA_URL:-http://127.0.0.1:8080}"
 
-exec uvicorn server.main:app --host 127.0.0.1 --port 8090
+# Host/puerto donde escucha la API. Por defecto 127.0.0.1:8090.
+# Para usar Open WebUI en Docker, poner API_HOST=0.0.0.0 y acceder desde
+# http://host.docker.internal:8090/v1.
+export API_HOST="${API_HOST:-127.0.0.1}"
+export API_PORT="${API_PORT:-8090}"
+
+exec uvicorn server.main:app --host "$API_HOST" --port "$API_PORT"
