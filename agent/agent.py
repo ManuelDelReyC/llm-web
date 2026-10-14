@@ -1,28 +1,27 @@
 #!/usr/bin/env python3
 
 import json
-import os
-import subprocess
 import sys
 from urllib.request import Request, urlopen
 
+from fetch_url import fetch
+from web_search import search
 
-LLAMA_URL = "http://127.0.0.1:8080/v1/chat/completions"
-MODEL = "qwen2.5-coder-7b-instruct"
+
+LLAMA_BASE_URL = "http://127.0.0.1:8080"
+LLAMA_URL = f"{LLAMA_BASE_URL}/v1/chat/completions"
+LLAMA_MODELS_URL = f"{LLAMA_BASE_URL}/v1/models"
+
+# Respaldo por si el servidor no informa ningún modelo.
+# llama-server sirve siempre el GGUF que tenga cargado
+# e ignora este campo, así que es solo cosmético.
+DEFAULT_MODEL = "local-model"
+
+# Se rellena en tiempo de ejecución con el modelo que
+# llama-server tiene cargado (ver get_model_name).
+MODEL = DEFAULT_MODEL
 
 MAX_ITERATIONS = 3
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-WEB_SEARCH_SCRIPT = os.path.join(
-    BASE_DIR,
-    "web_search.py",
-)
-
-FETCH_URL_SCRIPT = os.path.join(
-    BASE_DIR,
-    "fetch_url.py",
-)
 
 
 TOOLS = [
@@ -117,6 +116,35 @@ def debug(message: str):
             f"[DEBUG] {message}",
             file=sys.stderr,
         )
+
+
+def get_model_name() -> str:
+    """Pregunta a llama-server qué modelo tiene cargado."""
+
+    debug("→ llama-server | consultando modelo cargado")
+
+    try:
+        request = Request(LLAMA_MODELS_URL)
+
+        with urlopen(request, timeout=10) as response:
+            data = json.load(response)
+
+        models = data.get("data", [])
+
+        if models:
+
+            model_id = models[0].get("id")
+
+            if model_id:
+                debug(f"Modelo cargado: {model_id}")
+                return model_id
+
+    except Exception as e:
+        debug(f"No se pudo consultar el modelo: {e}")
+
+    debug(f"Usando modelo por defecto: {DEFAULT_MODEL}")
+
+    return DEFAULT_MODEL
 
 
 def call_llm(messages: list[dict]) -> dict:
@@ -245,31 +273,15 @@ def extract_tool_call(content: str):
     return None
 
 
-def run_web_search(query: str) -> dict:
-    """Ejecuta web_search.py."""
+def run_web_search(query: str) -> list | dict:
+    """Ejecuta la búsqueda web llamando a search() directamente."""
 
     debug(
         f"→ web_search | query={query!r}"
     )
 
     try:
-        result = subprocess.run(
-            [
-                sys.executable,
-                WEB_SEARCH_SCRIPT,
-                query,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-
-    except subprocess.TimeoutExpired:
-        debug("← web_search | TIMEOUT")
-
-        return {
-            "error": "La búsqueda web superó el tiempo límite."
-        }
+        data = search(query)
 
     except Exception as e:
         debug(
@@ -280,74 +292,22 @@ def run_web_search(query: str) -> dict:
             "error": f"No se pudo ejecutar web_search: {e}"
         }
 
-    if result.returncode != 0:
-
-        error = result.stderr.strip()
-
-        debug(
-            f"← web_search | returncode={result.returncode}"
-        )
-
-        return {
-            "error": (
-                "web_search terminó con error."
-                + (f" {error}" if error else "")
-            )
-        }
-
-    try:
-        data = json.loads(result.stdout)
-
-    except json.JSONDecodeError as e:
-
-        debug(
-            f"← web_search | JSON inválido: {e}"
-        )
-
-        return {
-            "error": (
-                "web_search no devolvió JSON válido: "
-                f"{e}"
-            )
-        }
-
-    if isinstance(data, list):
-        debug(
-            f"← web_search | resultados={len(data)}"
-        )
-    else:
-        debug(
-            "← web_search | resultado recibido"
-        )
+    debug(
+        f"← web_search | resultados={len(data)}"
+    )
 
     return data
 
 
 def run_fetch_url(url: str) -> dict:
-    """Ejecuta fetch_url.py."""
+    """Descarga una página llamando a fetch() directamente."""
 
     debug(
         f"→ fetch_url | url={url!r}"
     )
 
     try:
-        result = subprocess.run(
-            [
-                sys.executable,
-                FETCH_URL_SCRIPT,
-                url,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-
-    except subprocess.TimeoutExpired:
-        debug("← fetch_url | TIMEOUT")
-
-        return {
-            "error": "La descarga de la página superó el tiempo límite."
-        }
+        data = fetch(url)
 
     except Exception as e:
         debug(
@@ -355,68 +315,16 @@ def run_fetch_url(url: str) -> dict:
         )
 
         return {
-            "error": f"No se pudo ejecutar fetch_url: {e}"
-        }
-
-    if result.returncode != 0:
-
-        debug(
-            f"← fetch_url | returncode={result.returncode}"
-        )
-
-        # fetch_url.py puede devolver el error como JSON
-        # en stdout.
-        if result.stdout.strip():
-
-            try:
-                data = json.loads(
-                    result.stdout
-                )
-
-                if isinstance(data, dict):
-                    return data
-
-            except json.JSONDecodeError:
-                pass
-
-        error = result.stderr.strip()
-
-        return {
             "error": (
-                "fetch_url terminó con error."
-                + (f" {error}" if error else "")
-            )
-        }
-
-    try:
-        data = json.loads(
-            result.stdout
-        )
-
-    except json.JSONDecodeError as e:
-
-        debug(
-            f"← fetch_url | JSON inválido: {e}"
-        )
-
-        return {
-            "error": (
-                "fetch_url no devolvió JSON válido: "
+                "No se pudo ejecutar fetch_url: "
                 f"{e}"
-            )
+            ),
+            "url": url,
         }
-
-    content = ""
-
-    if isinstance(data, dict):
-        content = data.get(
-            "content",
-            "",
-        )
 
     debug(
         "← fetch_url | "
-        f"OK | contenido={len(content)} caracteres"
+        f"OK | contenido={len(data.get('content', ''))} caracteres"
     )
 
     return data
@@ -554,6 +462,10 @@ def handle_tool_call(
 
 def ask_agent(user_query: str) -> str:
     """Ejecuta el bucle agente → herramienta → agente."""
+
+    global MODEL
+
+    MODEL = get_model_name()
 
     messages = [
         {

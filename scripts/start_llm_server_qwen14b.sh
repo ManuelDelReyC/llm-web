@@ -1,18 +1,18 @@
 #!/bin/bash
-# Script Inicio llama.cpp optimizado para HP Elitedesk 600 G4 + GTX 1060 3GB
+# Perfil de inicio llama.cpp para Qwen3-14B.
 
 set -e
 
 MODELO="$HOME/Proyectos/llama/models/Qwen3-14B-Q5_K_M.gguf"
 NGL="${1:-99}"
-CTX="${2:-8192}"
+CTX="${2:-16384}"
 
 LLAMA_SERVER="$HOME/Proyectos/llama/src/llama.cpp/build/bin/llama-server"
 
 # Verifica que el modelo existe
 if [ ! -f "$MODELO" ]; then
     echo "❌ Modelo no encontrado: $MODELO"
-    echo "Uso: ./start_llm_server.sh [ruta_modelo] [capas_gpu] [contexto]"
+    echo "Uso: ./start_llm_server_qwen14b.sh [capas_gpu] [contexto]"
     exit 1
 fi
 
@@ -31,7 +31,7 @@ echo "   URL: http://localhost:8080"
 echo ""
 
 # Lanzamiento con optimizaciones para tu hardware
-~/Proyectos/llama/src/llama.cpp/build/bin/llama-server \
+"$LLAMA_SERVER" \
   -m "$MODELO" \
   --host 127.0.0.1 \
   --port 8080 \
@@ -46,4 +46,3 @@ echo ""
   -ctk q8_0 \
   -ctv q8_0 \
   --jinja
-

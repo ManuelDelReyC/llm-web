@@ -2,6 +2,7 @@
 
 import gzip
 import json
+import os
 import re
 import sys
 from html import unescape
@@ -10,7 +11,15 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 
-MAX_CONTENT_LENGTH = 12000
+# Longitud máxima del texto devuelto, para proteger el
+# contexto del LLM. Configurable con la variable de entorno
+# MAX_CONTENT_LENGTH.
+try:
+    MAX_CONTENT_LENGTH = int(
+        os.environ.get("MAX_CONTENT_LENGTH", "12000")
+    )
+except ValueError:
+    MAX_CONTENT_LENGTH = 12000
 
 
 def html_to_text(html: str) -> str:
@@ -128,8 +137,9 @@ def fetch(url: str) -> dict:
 
     # Limitar el contenido para proteger el contexto del LLM.
     if len(text) > MAX_CONTENT_LENGTH:
-        text = text[:MAX_CONTENT_LENGTH]
-        text += "\n\n[Contenido truncado]"
+        suffix = "\n\n[Contenido truncado]"
+        text = text[:MAX_CONTENT_LENGTH - len(suffix)]
+        text += suffix
 
     return {
         "url": final_url,
