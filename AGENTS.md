@@ -34,6 +34,9 @@ curl -s 'http://127.0.0.1:8081/search?q=Python&format=json' | python3 -m json.to
 # Run the agent (both services must be up).
 python3 agent/agent.py "tu pregunta"
 python3 agent/agent.py --debug "tu pregunta"   # verbose trace to stderr
+
+# Start the OpenAI-compatible API (needs .venv).
+./scripts/start_agent_api.sh                  # listens on 127.0.0.1:8090
 ```
 
 There is no test suite or verification step. The only real check is running
@@ -41,11 +44,13 @@ There is no test suite or verification step. The only real check is running
 
 ## Architecture gotchas
 
-- **Pure Python stdlib only.** No `requirements.txt`, no venv, no packages to
-  install (uses `urllib`, `subprocess`, `json`, `re`, `gzip`). Runs on the
-  system `python3` (currently 3.14). Do not add third-party dependencies
-  without confirming — the zero-install design is intentional. `fetch_url.py`
-  deliberately refuses Brotli (`br`) rather than pull in a dep.
+- **Pure Python stdlib only for the agent tools.** No `requirements.txt`, no
+  venv, no packages to install for `agent/*.py` (uses `urllib`, `subprocess`,
+  `json`, `re`, `gzip`). The API (`server/main.py`) is the exception: it runs
+  inside `.venv/` with `fastapi` + `uvicorn`. Do not add third-party
+  dependencies to the agent without confirming — the zero-install design is
+  intentional. `fetch_url.py` deliberately refuses Brotli (`br`) rather than
+  pull in a dep.
 - **The three Python files are importable modules AND standalone CLIs.**
   `agent.py` imports `search()` from `web_search.py` and `fetch()` from
   `fetch_url.py` and calls them in-process (no subprocesses). Both tools are
@@ -73,7 +78,9 @@ There is no test suite or verification step. The only real check is running
   `SEARXNG_HOST=127.0.0.1`). If you change them, also update the hardcoded
   `SEARXNG_URL` in `web_search.py` and `LLAMA_BASE_URL`/port in `agent.py` /
   `start_llm_server_qwen14b.sh` / `start_llm_server_qwen30b.sh` — these are not
-  wired to `.env`.
+  wired to `.env`. The API listens on `127.0.0.1:8090` and uses `LLAMA_URL`
+  (default `http://127.0.0.1:8080`) to reach llama-server; edit
+  `scripts/start_agent_api.sh` to change either.
 - **`fetch_url.py` truncates page text to `MAX_CONTENT_LENGTH` chars**
   (env var, default 12000; invalid values fall back to 12000) and only
   accepts `text/html`, `application/xhtml+xml`, or `text/plain`.
@@ -88,8 +95,9 @@ There is no test suite or verification step. The only real check is running
   `server.secret_key` in `searxng/core-config/settings.yml`. It is a committed
   secret: don't paste it into logs/output, and if you rotate it, update both
   places.
-- No `.gitignore` exists; `agent/__pycache__/*.pyc` is committed. Avoid adding
-  more build artifacts to git.
+- `.gitignore` now ignores `.venv/` and Python cache files. Only
+  `agent/__pycache__/*.pyc` was committed historically; avoid adding more
+  build artifacts to git.
 
 ## Conventions
 

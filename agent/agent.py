@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import json
+import os
 import sys
 from urllib.request import Request, urlopen
 
@@ -8,7 +9,10 @@ from fetch_url import fetch
 from web_search import search
 
 
-LLAMA_BASE_URL = "http://127.0.0.1:8080"
+LLAMA_BASE_URL = os.environ.get(
+    "LLAMA_BASE_URL",
+    "http://127.0.0.1:8080",
+)
 LLAMA_URL = f"{LLAMA_BASE_URL}/v1/chat/completions"
 LLAMA_MODELS_URL = f"{LLAMA_BASE_URL}/v1/models"
 
@@ -460,27 +464,12 @@ def handle_tool_call(
     )
 
 
-def ask_agent(user_query: str) -> str:
-    """Ejecuta el bucle agente → herramienta → agente."""
+def run_agent_conversation(messages: list[dict]) -> str:
+    """Ejecuta el bucle agente sobre una lista de mensajes ya formada."""
 
     global MODEL
 
     MODEL = get_model_name()
-
-    messages = [
-        {
-            "role": "system",
-            "content": SYSTEM_PROMPT,
-        },
-        {
-            "role": "user",
-            "content": user_query,
-        },
-    ]
-
-    debug(
-        f"Pregunta: {user_query!r}"
-    )
 
     for iteration in range(
         1,
@@ -753,6 +742,27 @@ def ask_agent(user_query: str) -> str:
         "El agente alcanzó el número máximo de iteraciones "
         "sin producir una respuesta final."
     )
+
+
+def ask_agent(user_query: str) -> str:
+    """Ejecuta el bucle agente → herramienta → agente."""
+
+    messages = [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT,
+        },
+        {
+            "role": "user",
+            "content": user_query,
+        },
+    ]
+
+    debug(
+        f"Pregunta: {user_query!r}"
+    )
+
+    return run_agent_conversation(messages)
 
 
 def main():

@@ -43,7 +43,7 @@ primera fase no marcada como hecha.
    subprocesos; los CLIs de las tools se mantienen.
 4. Verificación: agente CLI end-to-end con el 30B activo.
 
-## Fase 1 — API FastAPI
+## Fase 1 — API FastAPI ✅ HECHA (2026-10-15)
 
 1. Crear `.venv` en la raíz del repo e instalar `fastapi` + `uvicorn`
    (únicas dependencias nuevas del proyecto). Añadir `.venv/` a un
