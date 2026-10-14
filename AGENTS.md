@@ -23,6 +23,17 @@ of `python3 agent/agent.py`; you must start them yourself.
 
 ## Commands
 
+### Full startup order (all services)
+
+```bash
+./scripts/start_llm_server_qwen30b.sh          # or qwen14b.sh
+cd searxng && docker compose up -d && cd ..
+API_HOST=0.0.0.0 ./scripts/start_agent_api.sh
+./scripts/start_open_webui.sh                   # http://localhost:3000
+```
+
+### Individual commands
+
 ```bash
 # Start SearXNG (first time / after reboot). README.md only shows the routine
 # `docker compose restart core` + logs, which assumes it's already created.
@@ -43,6 +54,19 @@ python3 agent/agent.py --debug "tu pregunta"   # verbose trace to stderr
 # Start Open WebUI (optional; needs the API running with API_HOST=0.0.0.0).
 API_HOST=0.0.0.0 ./scripts/start_agent_api.sh  # expose the API to Docker
 ./scripts/start_open_webui.sh                  # http://localhost:3000
+```
+
+### Stop order
+
+```bash
+# 1. Stop Open WebUI.
+cd open-webui && docker compose down
+
+# 2. Stop the API (Ctrl+C in its terminal).
+# 3. Stop SearXNG.
+cd searxng && docker compose down
+
+# 4. Stop llama-server (Ctrl+C in its terminal).
 ```
 
 There is no test suite or verification step. The only real check is running

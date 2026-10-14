@@ -31,6 +31,17 @@ modelo al cambiar de perfil**: cada script selecciona su propio GGUF.
 
 ## Puesta en marcha
 
+Orden de arranque recomendado:
+
+```bash
+./scripts/start_llm_server_qwen30b.sh         # o qwen14b.sh
+cd searxng && docker compose up -d && cd ..
+API_HOST=0.0.0.0 ./scripts/start_agent_api.sh
+./scripts/start_open_webui.sh
+```
+
+A continuación, cada paso en detalle.
+
 ### 1. Servidor LLM
 
 ```bash
@@ -108,6 +119,21 @@ actual; el agente usará `web_search` automáticamente.
 > **Nota:** la primera vez que arrancas Open WebUI descarga un modelo de
 > embeddings desde Hugging Face, lo que puede tardar varios minutos. Hasta
 > entonces la interfaz puede no responder.
+
+### 6. Parar los servicios
+
+Orden recomendado:
+
+```bash
+# 1. Parar Open WebUI.
+cd open-webui && docker compose down
+
+# 2. Parar la API (Ctrl+C en su terminal).
+# 3. Parar SearXNG.
+cd searxng && docker compose down
+
+# 4. Parar llama-server (Ctrl+C en su terminal).
+```
 
 ## Notas
 
