@@ -17,6 +17,9 @@ a través de una instancia local de [SearXNG](https://docs.searxng.org/).
 | `agent/fetch_url.py` | CLI que descarga una página, la convierte a texto (máx. 12000 caracteres por defecto, configurable con la variable de entorno `MAX_CONTENT_LENGTH`) y devuelve JSON. |
 | `server/main.py` | API compatible con OpenAI (`/v1/chat/completions` y `/v1/models`) que expone el agente. |
 | `open-webui/docker-compose.yml` | Open WebUI en Docker, preconfigurado contra la API propia. |
+| `opencode.json` | Configuración de OpenCode para usar la API local como proveedor personalizado. |
+| `mcp/web_search.py` | Servidor MCP con la herramienta `web_search` (plan B). |
+| `mcp/fetch_url.py` | Servidor MCP con la herramienta `fetch_url` (plan B). |
 
 El agente detecta automáticamente el modelo cargado consultando
 `/v1/models` del servidor, así que **no hay que editar ningún nombre de
@@ -38,6 +41,7 @@ Orden de arranque recomendado:
 cd searxng && docker compose up -d && cd ..
 API_HOST=0.0.0.0 ./scripts/start_agent_api.sh
 ./scripts/start_open_webui.sh
+# Opcional: opencode run / opencode tui usan opencode.json del repo.
 ```
 
 A continuación, cada paso en detalle.
@@ -120,7 +124,34 @@ actual; el agente usará `web_search` automáticamente.
 > embeddings desde Hugging Face, lo que puede tardar varios minutos. Hasta
 > entonces la interfaz puede no responder.
 
-### 6. Parar los servicios
+### 6. OpenCode (opcional)
+
+El archivo `opencode.json` del repo configura OpenCode para que use la API
+local como proveedor personalizado (`http://127.0.0.1:8090/v1`). De este modo
+OpenCode se beneficia del mismo bucle agente que la CLI y Open WebUI.
+
+```bash
+# Asegúrate de que la API está en marcha.
+./scripts/start_agent_api.sh
+
+# Desde la raíz del repo, donde está opencode.json.
+opencode run "¿Cuál es la última versión estable de Python?"
+```
+
+La primera vez selecciona el modelo:
+
+```bash
+opencode models   # o /models dentro del TUI
+```
+
+Elige `llm-web/local-model`.
+
+Si el proveedor personalizado no funciona bien con el modelo cargado, existe
+un plan B documentado en `AGENTS.md`: apuntar OpenCode directamente a
+llama-server y usar `mcp/web_search.py` y `mcp/fetch_url.py` como servidores
+MCP.
+
+### 7. Parar los servicios
 
 Orden recomendado:
 

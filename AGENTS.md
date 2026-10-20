@@ -20,6 +20,9 @@ of `python3 agent/agent.py`; you must start them yourself.
 - **SearXNG → `127.0.0.1:8081`** via Docker Compose in `searxng/`.
 - **Open WebUI → `http://localhost:3000`** (optional) via Docker Compose in
   `open-webui/`. It talks to the agent API, not directly to llama-server.
+- **OpenCode** (optional) lee `opencode.json` del repo y se conecta a la API
+  local como proveedor personalizado. También existe un plan B con MCP
+  documentado más abajo.
 
 ## Commands
 
@@ -54,6 +57,11 @@ python3 agent/agent.py --debug "tu pregunta"   # verbose trace to stderr
 # Start Open WebUI (optional; needs the API running with API_HOST=0.0.0.0).
 API_HOST=0.0.0.0 ./scripts/start_agent_api.sh  # expose the API to Docker
 ./scripts/start_open_webui.sh                  # http://localhost:3000
+
+# Use OpenCode from this project (optional).
+# The project config selects the local API as provider and model.
+opencode run "¿Cuál es la última versión estable de Python?"
+opencode tui
 ```
 
 ### Stop order
@@ -125,6 +133,100 @@ There is no test suite or verification step. The only real check is running
 - **Open WebUI downloads an embedding model on first start.** It fetches
   `sentence-transformers/all-MiniLM-L6-v2` from Hugging Face, so the UI may
   be unresponsive for a few minutes until the download finishes.
+- **OpenCode usa `opencode.json` del repo.** El proveedor `llm-web` apunta a
+  `http://127.0.0.1:8090/v1` y el modelo seleccionado es `llm-web/local-model`.
+  La API ignora el campo `model` (lo hace también llama-server), así que el
+  valor sirve solo para que OpenCode pueda dirigir las peticiones. La primera
+  vez selecciona el modelo con `/models` o `opencode models`.
+- **Plan B con MCP disponible.** Si el proveedor personalizado no funciona
+  bien (por ejemplo, problemas de tool calling con el modelo local), existe
+  un fallback en `mcp/web_search.py` y `mcp/fetch_url.py` que expone las
+  herramientas como servidores MCP. Ver sección "OpenCode" más abajo.
+
+## OpenCode
+
+La Fase 3 añade soporte para usar este proyecto como backend de OpenCode.
+Hay dos opciones; la recomendada es la **opción A** porque reutiliza la
+misma lógica de agente probada en CLI, API y Open WebUI.
+
+### Opción A — proveedor personalizado contra la API (recomendada)
+
+Con la API arrancada (`./scripts/start_agent_api.sh`), el archivo
+`opencode.json` del repo registra automáticamente el proveedor `llm-web`
+con `baseURL` `http://127.0.0.1:8090/v1`.
+
+```bash
+# Desde la raíz del repo, donde se encuentra opencode.json.
+opencode run "¿Qué novedades hay hoy sobre inteligencia artificial?"
+```
+
+La primera vez puede ser necesario seleccionar el modelo:
+
+```bash
+opencode models   # o /models dentro del TUI
+```
+
+Elige `llm-web/local-model`. Como la API ejecuta el bucle agente completo
+(incluyendo `web_search` y `fetch_url`), OpenCode recibe directamente la
+respuesta final sin necesidad de herramientas adicionales.
+
+### Opción B — llama-server directo + herramientas MCP (fallback)
+
+Si la opción A no da buenos resultados (por ejemplo, el modelo local no
+responde bien al formato de tool calls que espera OpenCode), se puede
+apuntar OpenCode directamente a llama-server y darle las herramientas web
+como servidores MCP.
+
+Sustituye la sección `provider` y añade `mcp` en `opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "llama.cpp": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "llama-server (directo)",
+      "options": {
+        "baseURL": "http://127.0.0.1:8080/v1"
+      },
+      "models": {
+        "local-model": {
+          "name": "Qwen3 local (directo)",
+          "limit": {
+            "context": 32768,
+            "output": 4096
+          }
+        }
+      }
+    }
+  },
+  "model": "llama.cpp/local-model",
+  "small_model": "llama.cpp/local-model",
+  "mcp": {
+    "llm-web-search": {
+      "type": "local",
+      "command": ["python3", "mcp/web_search.py"],
+      "enabled": true
+    },
+    "llm-web-fetch": {
+      "type": "local",
+      "command": ["python3", "mcp/fetch_url.py"],
+      "enabled": true
+    }
+  }
+}
+```
+
+En este modo OpenCode es el que orquesta el bucle de herramientas, así que
+es conveniente añadir en los prompts algo como "usa web_search" cuando se
+necesite información actual.
+
+### Decisión
+
+Por defecto se usa la **opción A**: es la más sencilla, mantiene un solo
+punto de lógica (la API) y ha funcionado en CLI y Open WebUI. La opción B
+se mantiene como alternativa documentada por si el modelo local muestra
+problemas de tool calling a través del proveedor OpenAI-compatible.
 
 ## Files to ignore / handle with care
 

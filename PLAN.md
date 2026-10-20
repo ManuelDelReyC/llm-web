@@ -71,13 +71,21 @@ primera fase no marcada como hecha.
 3. Verificación: chat en el navegador (`http://localhost:3000`) que usa
    búsqueda web cuando se le pregunta algo actual.
 
-## Fase 3 — OpenCode
+## Fase 3 — OpenCode ✅ HECHA (2026-10-20)
 
 1. Registrar la API como proveedor personalizado en `opencode.json`
    (baseURL `http://127.0.0.1:8090/v1`). Probar calidad real.
 2. Si no va fino, plan B: OpenCode apuntando directo a llama-server +
    tools web como servidores MCP.
 3. Decidir con datos; documentar la opción final en `AGENTS.md`.
+
+Realizado:
+- Creado `opencode.json` con el proveedor `llm-web` apuntando a la API local.
+- Creados `mcp/web_search.py` y `mcp/fetch_url.py` como servidores MCP stdio
+  (stdlib puro) para el plan B.
+- Documentada la opción recomendada (A: API personalizada) y el fallback
+  (B: llama-server directo + MCP) en `AGENTS.md`.
+- Actualizado `README.md` con la sección de OpenCode.
 
 ## Fase 4 — Red local (solo cuando el usuario lo pida)
 

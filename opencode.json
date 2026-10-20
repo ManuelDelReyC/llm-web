@@ -1,0 +1,23 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "llm-web": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "llm-web (API local)",
+      "options": {
+        "baseURL": "http://127.0.0.1:8090/v1"
+      },
+      "models": {
+        "local-model": {
+          "name": "Qwen3 local (vía llm-web API)",
+          "limit": {
+            "context": 32768,
+            "output": 4096
+          }
+        }
+      }
+    }
+  },
+  "model": "llm-web/local-model",
+  "small_model": "llm-web/local-model"
+}
