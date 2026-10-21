@@ -765,6 +765,86 @@ def ask_agent(user_query: str) -> str:
     return run_agent_conversation(messages)
 
 
+def interactive_mode():
+    """Bucle interactivo que mantiene el historial de conversación."""
+
+    global DEBUG
+
+    messages = [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT,
+        },
+    ]
+
+    print(
+        "🤖 Agente listo. Escribe tu pregunta o uno de estos comandos:"
+    )
+    print("  /quit, /salir  → cerrar")
+    print("  /debug         → alternar traza detallada")
+    print("  /clear         → borrar el historial")
+    print("")
+
+    while True:
+
+        try:
+            user_input = input("> ").strip()
+        except (
+            EOFError,
+            KeyboardInterrupt,
+        ):
+            print()
+            break
+
+        if not user_input:
+            continue
+
+        command = user_input.lower()
+
+        if command in (
+            "/quit",
+            "/salir",
+            "/exit",
+        ):
+            break
+
+        if command == "/debug":
+            DEBUG = not DEBUG
+            print(
+                f"DEBUG={'activado' if DEBUG else 'desactivado'}"
+            )
+            continue
+
+        if command == "/clear":
+            messages = [
+                {
+                    "role": "system",
+                    "content": SYSTEM_PROMPT,
+                },
+            ]
+            print("Historial borrado.")
+            continue
+
+        messages.append(
+            {
+                "role": "user",
+                "content": user_input,
+            }
+        )
+
+        answer = run_agent_conversation(messages)
+
+        print(answer)
+        print("")
+
+        messages.append(
+            {
+                "role": "assistant",
+                "content": answer,
+            }
+        )
+
+
 def main():
 
     global DEBUG
@@ -780,13 +860,8 @@ def main():
         )
 
     if not args:
-
-        print(
-            f'Uso: {sys.argv[0]} [--debug] "pregunta"',
-            file=sys.stderr,
-        )
-
-        sys.exit(1)
+        interactive_mode()
+        return
 
     user_query = " ".join(
         args

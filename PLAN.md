@@ -57,7 +57,7 @@ primera fase no marcada como hecha.
      lo necesitan para listar el modelo).
    - Backend configurable con `LLAMA_URL` (defecto `http://127.0.0.1:8080`).
    - Escuchar en `127.0.0.1:8090`.
-3. `scripts/start_agent_api.sh`: activa el venv y arranca uvicorn.
+3. Arranque de la API a través del script unificado `./llm api`.
 4. Primero respuesta completa; **streaming (SSE) como último paso** de la
    fase (la UX "escribe en vivo" la necesitará Open WebUI).
 5. Verificación: `curl` al endpoint con una pregunta que fuerce búsqueda
@@ -86,6 +86,24 @@ Realizado:
 - Documentada la opción recomendada (A: API personalizada) y el fallback
   (B: llama-server directo + MCP) en `AGENTS.md`.
 - Actualizado `README.md` con la sección de OpenCode.
+
+## Simplificación — Script unificado `./llm` ✅ HECHA (2026-10-21)
+
+1. Unificar arranque/parada en un solo script `./llm` con comandos
+   `cli`, `api`, `web`, `stop` y `status`.
+2. Eliminar los scripts individuales de arranque y el perfil de 14B;
+   mantener solo Qwen3-30B.
+3. Añadir modo interactivo a `agent/agent.py` (sin argumentos) para usarlo
+   desde `./llm cli`.
+4. Actualizar `README.md` y `AGENTS.md` con el nuevo flujo de uso.
+
+Realizado:
+- Creado `./llm` que gestiona llama-server, SearXNG, API y Open WebUI.
+- Eliminados `scripts/start_llm_server_qwen14b.sh`,
+  `scripts/start_llm_server_qwen30b.sh`, `scripts/start_agent_api.sh`,
+  `scripts/start_open_webui.sh` y `scripts/stop_llm_server.sh`.
+- `agent/agent.py` entra en modo interactivo cuando no recibe argumentos.
+- Documentación actualizada en `README.md` y `AGENTS.md`.
 
 ## Fase 4 — Red local (solo cuando el usuario lo pida)
 

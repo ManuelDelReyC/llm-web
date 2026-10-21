@@ -5,80 +5,60 @@ Local LLM "web agent": a Python agent loop that talks to a self-hosted
 fetcher. Everything is a personal, single-machine setup. No CI, no tests, no
 lint, no dependency manifests.
 
-## Runtime prerequisites (not auto-started)
+## Runtime prerequisites
 
-The agent needs two external services running before it works. Neither is part
-of `python3 agent/agent.py`; you must start them yourself.
+El script `./llm` gestiona todos los servicios. Dependen de un proyecto
+hermano *fuera de este repo*:
+`~/Proyectos/llama/src/llama.cpp/build/bin/llama-server` y un modelo GGUF en
+`~/Proyectos/llama/models/*.gguf`. Si esas rutas no existen, `./llm` saldrá
+con un error.
 
-- **llama.cpp server → `127.0.0.1:8080`** via one of the model-specific
-  scripts in `scripts/` (`start_llm_server_qwen14b.sh` or
-  `start_llm_server_qwen30b.sh`).
-  It depends on a sibling project *outside this repo*:
-  `~/Proyectos/llama/src/llama.cpp/build/bin/llama-server` and a GGUF model at
-  `~/Proyectos/llama/models/*.gguf`. If those paths don't exist, the script
-  exits early.
-- **SearXNG → `127.0.0.1:8081`** via Docker Compose in `searxng/`.
-- **Open WebUI → `http://localhost:3000`** (optional) via Docker Compose in
-  `open-webui/`. It talks to the agent API, not directly to llama-server.
-- **OpenCode** (optional) lee `opencode.json` del repo y se conecta a la API
+- **llama.cpp server → `127.0.0.1:8080`** gestionado por `./llm`.
+- **SearXNG → `127.0.0.1:8081`** gestionado por `./llm` (Docker Compose en
+  `searxng/`).
+- **API del agente → `127.0.0.1:8090`** gestionada por `./llm api` / `./llm web`.
+- **Open WebUI → `http://localhost:3000`** gestionado por `./llm web` (Docker
+  Compose en `open-webui/`).
+- **OpenCode** (opcional) lee `opencode.json` del repo y se conecta a la API
   local como proveedor personalizado. También existe un plan B con MCP
   documentado más abajo.
 
 ## Commands
 
-### Full startup order (all services)
+### Modos de uso con `./llm`
 
 ```bash
-./scripts/start_llm_server_qwen30b.sh          # or qwen14b.sh
-cd searxng && docker compose up -d && cd ..
-API_HOST=0.0.0.0 ./scripts/start_agent_api.sh
-./scripts/start_open_webui.sh                   # http://localhost:3000
+./llm cli      # Terminal interactiva (llama-server + SearXNG + agente)
+./llm api      # Solo API en http://127.0.0.1:8090
+./llm web      # Navegador con Open WebUI (todo el stack)
+./llm status   # Ver qué servicios están corriendo
+./llm stop     # Detener todo
 ```
 
-### Individual commands
+### Comandos individuales (legacy / depuración)
 
 ```bash
-# Start SearXNG (first time / after reboot). README.md only shows the routine
-# `docker compose restart core` + logs, which assumes it's already created.
-cd searxng && docker compose up -d          # starts `core` + `valkey` (cache)
+# Iniciar SearXNG manualmente (primera vez / después de reiniciar).
+cd searxng && docker compose up -d
 curl -s 'http://127.0.0.1:8081/search?q=Python&format=json' | python3 -m json.tool
 
-# Start one model-specific LLM server profile.
-./scripts/start_llm_server_qwen14b.sh        # [ngl] [ctx], defaults 99 and 16384
-./scripts/start_llm_server_qwen30b.sh        # [ngl] [ctx] [batch], defaults auto/8192/256
-
-# Run the agent (both services must be up).
+# Ejecutar el agente (llama-server y SearXNG deben estar en marcha).
 python3 agent/agent.py "tu pregunta"
-python3 agent/agent.py --debug "tu pregunta"   # verbose trace to stderr
+python3 agent/agent.py --debug "tu pregunta"   # traza detallada en stderr
 
-# Start the OpenAI-compatible API (needs .venv).
-./scripts/start_agent_api.sh                  # listens on 127.0.0.1:8090
-
-# Start Open WebUI (optional; needs the API running with API_HOST=0.0.0.0).
-API_HOST=0.0.0.0 ./scripts/start_agent_api.sh  # expose the API to Docker
-./scripts/start_open_webui.sh                  # http://localhost:3000
-
-# Use OpenCode from this project (optional).
-# The project config selects the local API as provider and model.
+# Usar OpenCode (la API debe estar en marcha vía ./llm api).
 opencode run "¿Cuál es la última versión estable de Python?"
 opencode tui
 ```
 
-### Stop order
+### Parada
 
 ```bash
-# 1. Stop Open WebUI.
-cd open-webui && docker compose down
-
-# 2. Stop the API (Ctrl+C in its terminal).
-# 3. Stop SearXNG.
-cd searxng && docker compose down
-
-# 4. Stop llama-server (Ctrl+C in its terminal).
+./llm stop
 ```
 
-There is no test suite or verification step. The only real check is running
-`agent/agent.py` end-to-end against the live services.
+No hay suite de tests ni verificación automática. La única comprobación real
+es ejecutar `agent/agent.py` o `./llm cli` contra los servicios activos.
 
 ## Architecture gotchas
 
@@ -99,13 +79,13 @@ There is no test suite or verification step. The only real check is running
 - **The model name is auto-detected at runtime.** `agent.py` queries
   `llama-server`'s `/v1/models` and uses the loaded GGUF's id, falling back to
   `DEFAULT_MODEL = "local-model"` when the server is unreachable (llama-server
-  ignores the request's model field anyway). To change models, edit
-  `start_llm_server_qwen14b.sh` or
-  `start_llm_server_qwen30b.sh` — don't reintroduce a hardcoded model constant.
+  ignores the request's model field anyway). El único perfil soportado es
+  Qwen3-30B-A3B-Q4_K_M, lanzado por `./llm`. Para ajustar capas/contexto usa
+  las variables `NGL`, `CTX` y `BATCH` (p. ej. `NGL=20 ./llm cli`).
 - **The Qwen3-30B profile is intentionally conservative.** `-ngl auto` puts as
   many layers as fit in VRAM and leaves the rest in CPU/RAM; context 8192 and
   batch 256 limit additional memory use. If startup still runs out of VRAM,
-  pass an explicit lower layer count, e.g. `./scripts/start_llm_server_qwen30b.sh 20`.
+  pass an explicit lower layer count, e.g. `NGL=20 ./llm cli`.
   Lowering `ngl` makes it slower but moves more layers to RAM.
 - **SearXNG must have the `json` format enabled**, or `web_search.py` gets a
   403. It is enabled in `searxng/core-config/settings.yml`
@@ -114,22 +94,20 @@ There is no test suite or verification step. The only real check is running
   `docker compose restart core` to apply.
 - **Ports are configurable in `searxng/.env`** (`SEARXNG_PORT=8081`,
   `SEARXNG_HOST=127.0.0.1`). If you change them, also update the hardcoded
-  `SEARXNG_URL` in `web_search.py` and `LLAMA_BASE_URL`/port in `agent.py` /
-  `start_llm_server_qwen14b.sh` / `start_llm_server_qwen30b.sh` — these are not
-  wired to `.env`. The API listens on `API_HOST:API_PORT` (default
-  `127.0.0.1:8090`) and uses `LLAMA_URL` (default `http://127.0.0.1:8080`) to
-  reach llama-server; edit `scripts/start_agent_api.sh` or pass env vars to
-  change them.
+  `SEARXNG_URL` in `web_search.py` and `LLAMA_BASE_URL`/port in `agent.py`.
+  Los puertos también se pueden cambiar con variables de entorno al invocar
+  `./llm`: `LLAMA_PORT`, `SEARXNG_PORT`, `API_PORT`, `WEBUI_PORT`. La API usa
+  `LLAMA_URL` (default `http://127.0.0.1:8080`) para hablar con llama-server.
 - **`fetch_url.py` truncates page text to `MAX_CONTENT_LENGTH` chars**
   (env var, default 12000; invalid values fall back to 12000) and only
   accepts `text/html`, `application/xhtml+xml`, or `text/plain`.
 - **Open WebUI needs the API to listen on `0.0.0.0`.** Docker containers on
-  Linux cannot reach `127.0.0.1` of the host. Start the API with
-  `API_HOST=0.0.0.0 ./scripts/start_agent_api.sh`; the Open WebUI compose
-  uses `host.docker.internal:8090` plus `extra_hosts` to reach it. If your
-  Docker setup does not support `host.docker.internal`, switch the API to
-  `0.0.0.0` and set `OPENAI_API_BASE_URL` to the host's LAN IP or use
-  `network_mode: host` for Open WebUI.
+  Linux cannot reach `127.0.0.1` of the host. `./llm web` arranca la API en
+  `0.0.0.0:8090` automáticamente; el compose de Open WebUI usa
+  `host.docker.internal:8090` más `extra_hosts` para alcanzarla. Si tu
+  instalación de Docker no soporta `host.docker.internal`, cambia la API a
+  `0.0.0.0` y ajusta `OPENAI_API_BASE_URL` a la IP LAN del host o usa
+  `network_mode: host` para Open WebUI.
 - **Open WebUI downloads an embedding model on first start.** It fetches
   `sentence-transformers/all-MiniLM-L6-v2` from Hugging Face, so the UI may
   be unresponsive for a few minutes until the download finishes.
@@ -151,7 +129,7 @@ misma lógica de agente probada en CLI, API y Open WebUI.
 
 ### Opción A — proveedor personalizado contra la API (recomendada)
 
-Con la API arrancada (`./scripts/start_agent_api.sh`), el archivo
+Con la API arrancada (`./llm api`), el archivo
 `opencode.json` del repo registra automáticamente el proveedor `llm-web`
 con `baseURL` `http://127.0.0.1:8090/v1`.
 

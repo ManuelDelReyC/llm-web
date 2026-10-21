@@ -5,96 +5,98 @@ estándar, sin dependencias) que consulta un modelo local servido por
 [llama.cpp](https://github.com/ggml-org/llama.cpp) y puede buscar en internet
 a través de una instancia local de [SearXNG](https://docs.searxng.org/).
 
+Todo se gestiona con un único script: **`./llm`**.
+
 ## Arquitectura
 
 | Componente | Descripción |
 | --- | --- |
-| `scripts/start_llm_server_qwen14b.sh` | Arranca `llama-server` con Qwen3-14B en `http://127.0.0.1:8080`. |
-| `scripts/start_llm_server_qwen30b.sh` | Arranca `llama-server` con Qwen3-30B-A3B-Q4_K_M y offload automático de capas a GPU/RAM. |
-| `searxng/` | SearXNG en Docker Compose, en `http://127.0.0.1:8081` (puerto configurable en `searxng/.env`). |
+| `./llm` | Script único para arrancar/parar el stack en los tres modos de uso. |
 | `agent/agent.py` | Bucle principal: envía la pregunta al LLM con dos herramientas (`web_search` y `fetch_url`), ejecuta las llamadas y devuelve la respuesta final. |
 | `agent/web_search.py` | CLI que busca en SearXNG y devuelve los resultados en JSON. |
-| `agent/fetch_url.py` | CLI que descarga una página, la convierte a texto (máx. 12000 caracteres por defecto, configurable con la variable de entorno `MAX_CONTENT_LENGTH`) y devuelve JSON. |
+| `agent/fetch_url.py` | CLI que descarga una página, la convierte a texto (máx. 12000 caracteres por defecto, configurable con `MAX_CONTENT_LENGTH`) y devuelve JSON. |
+| `searxng/` | SearXNG en Docker Compose, en `http://127.0.0.1:8081` (puerto configurable en `searxng/.env`). |
 | `server/main.py` | API compatible con OpenAI (`/v1/chat/completions` y `/v1/models`) que expone el agente. |
-| `open-webui/docker-compose.yml` | Open WebUI en Docker, preconfigurado contra la API propia. |
+| `open-webui/` | Open WebUI en Docker, preconfigurado contra la API propia. |
 | `opencode.json` | Configuración de OpenCode para usar la API local como proveedor personalizado. |
 | `mcp/web_search.py` | Servidor MCP con la herramienta `web_search` (plan B). |
 | `mcp/fetch_url.py` | Servidor MCP con la herramienta `fetch_url` (plan B). |
 
 El agente detecta automáticamente el modelo cargado consultando
 `/v1/models` del servidor, así que **no hay que editar ningún nombre de
-modelo al cambiar de perfil**: cada script selecciona su propio GGUF.
+modelo**. El único perfil disponible es Qwen3-30B-A3B-Q4_K_M.
 
 ## Requisitos
 
-- Python 3 (solo biblioteca estándar; no hay que instalar nada).
-- Docker Compose (para SearXNG).
-- llama.cpp compilado y los modelos GGUF en `~/Proyectos/llama/models/`
-  (ver las rutas dentro de los scripts de `scripts/`).
+- Python 3 (solo biblioteca estándar para el agente; `.venv` con `fastapi` + `uvicorn` para la API).
+- Docker Compose (para SearXNG y Open WebUI).
+- llama.cpp compilado y el modelo GGUF en `~/Proyectos/llama/models/`
+  (ver las rutas dentro de `./llm`).
+
+## Uso rápido
+
+```bash
+./llm cli     # Terminal interactiva
+./llm api     # Solo API (para OpenCode u otras apps)
+./llm web     # Navegador con Open WebUI
+./llm status  # Ver qué está corriendo
+./llm stop    # Parar todo
+```
+
+Cada comando arranca solo los servicios que necesita, espera a que estén
+listos y reutiliza los que ya estén corriendo. Los modos `api` y `web` se
+quedan en primer plano; presiona `Ctrl+C` para detener todo.
+
+| Modo | Servicios levantados |
+| --- | --- |
+| `cli` | llama-server + SearXNG + agente interactivo |
+| `api` | llama-server + SearXNG + API en `http://127.0.0.1:8090` |
+| `web` | llama-server + SearXNG + API (`0.0.0.0:8090`) + Open WebUI |
 
 ## Puesta en marcha
 
-Orden de arranque recomendado:
+### 1. Terminal interactiva
 
 ```bash
-./scripts/start_llm_server_qwen30b.sh         # o qwen14b.sh
-cd searxng && docker compose up -d && cd ..
-API_HOST=0.0.0.0 ./scripts/start_agent_api.sh
-./scripts/start_open_webui.sh
-# Opcional: opencode run / opencode tui usan opencode.json del repo.
+./llm cli
 ```
 
-A continuación, cada paso en detalle.
+Aparecerá un prompt `>`. Escribe tu pregunta y el agente responderá,
+usando búsqueda web cuando sea necesario. Mantiene el historial de la
+conversación hasta que salgas o uses `/clear`.
 
-### 1. Servidor LLM
+Ejemplo de sesión:
 
-```bash
-./scripts/start_llm_server_qwen14b.sh    # [capas_gpu] [contexto], por defecto 99 y 16384
-./scripts/start_llm_server_qwen30b.sh    # [capas_gpu] [contexto] [batch], por defecto auto, 8192 y 256
+```text
+> ¿Cuál es la última versión estable de Python?
+La última versión estable de Python es...
+
+> /clear
+Historial borrado.
+
+> /quit
 ```
 
-### 2. Inicio SearXNG
+Comandos disponibles dentro del chat:
 
-`cd ~/Proyectos/llm-web/searxng`
+- `/quit` o `/salir`: cerrar.
+- `/debug`: alternar traza detallada.
+- `/clear`: borrar el historial de la conversación.
 
-`docker compose up -d` (primera vez; para reiniciar: `docker compose restart core`)
-
-`docker compose ps`
-
-`docker compose logs --tail=30 core`
-
-`curl -i http://127.0.0.1:8081/`
-
-`curl -s 'http://127.0.0.1:8081/search?q=Python&format=json' | python3 -m json.tool`
-
-El resultado debería ser JSON con resultados de búsqueda.
-
-### 3. Usar el agente
-
-Con ambos servicios en marcha:
+También puedes seguir usando el agente en modo "una sola pregunta":
 
 ```bash
 python3 agent/agent.py "¿Cuál es la última versión estable de Python?"
 python3 agent/agent.py --debug "pregunta"   # traza detallada en stderr
 ```
 
-Las herramientas también funcionan por separado:
+### 2. API OpenAI-compatible
 
 ```bash
-python3 agent/web_search.py "consulta"
-python3 agent/fetch_url.py "https://ejemplo.com"
+./llm api
 ```
 
-### 4. API OpenAI-compatible (opcional)
-
-Con el entorno virtual creado en `.venv/`:
-
-```bash
-./scripts/start_agent_api.sh                 # 127.0.0.1:8090
-API_HOST=0.0.0.0 ./scripts/start_agent_api.sh  # expone también a Docker
-```
-
-Prueba rápida:
+La API escuchará en `http://127.0.0.1:8090`. Prueba rápida:
 
 ```bash
 curl -s http://127.0.0.1:8090/v1/models | python3 -m json.tool
@@ -103,17 +105,12 @@ curl -s -X POST http://127.0.0.1:8090/v1/chat/completions \
   -d '{"messages":[{"role":"user","content":"¿Qué hora es?"}]}' | python3 -m json.tool
 ```
 
-### 5. Interfaz web con Open WebUI (opcional)
+Presiona `Ctrl+C` en el terminal de `./llm api` para detener todo.
 
-Open WebUI se conecta a la API del paso anterior para ofrecer un chat tipo
-ChatGPT en el navegador.
+### 3. Interfaz web con Open WebUI
 
 ```bash
-# 1. API escuchando en todas las interfaces (necesario para Docker).
-API_HOST=0.0.0.0 ./scripts/start_agent_api.sh
-
-# 2. Arrancar Open WebUI.
-./scripts/start_open_webui.sh
+./llm web
 ```
 
 Abre `http://localhost:3000`, crea la cuenta de administrador la primera vez y
@@ -124,7 +121,7 @@ actual; el agente usará `web_search` automáticamente.
 > embeddings desde Hugging Face, lo que puede tardar varios minutos. Hasta
 > entonces la interfaz puede no responder.
 
-### 6. OpenCode (opcional)
+### 4. OpenCode
 
 El archivo `opencode.json` del repo configura OpenCode para que use la API
 local como proveedor personalizado (`http://127.0.0.1:8090/v1`). De este modo
@@ -132,7 +129,7 @@ OpenCode se beneficia del mismo bucle agente que la CLI y Open WebUI.
 
 ```bash
 # Asegúrate de que la API está en marcha.
-./scripts/start_agent_api.sh
+./llm api
 
 # Desde la raíz del repo, donde está opencode.json.
 opencode run "¿Cuál es la última versión estable de Python?"
@@ -151,19 +148,55 @@ un plan B documentado en `AGENTS.md`: apuntar OpenCode directamente a
 llama-server y usar `mcp/web_search.py` y `mcp/fetch_url.py` como servidores
 MCP.
 
-### 7. Parar los servicios
-
-Orden recomendado:
+### 5. Parar los servicios
 
 ```bash
-# 1. Parar Open WebUI.
-cd open-webui && docker compose down
+./llm stop
+```
 
-# 2. Parar la API (Ctrl+C en su terminal).
-# 3. Parar SearXNG.
-cd searxng && docker compose down
+También puedes consultar el estado en cualquier momento:
 
-# 4. Parar llama-server (Ctrl+C en su terminal).
+```bash
+./llm status
+```
+
+## Personalización
+
+Puedes cambiar puertos, rutas y parámetros del modelo mediante variables de
+entorno:
+
+```bash
+# Cambiar puertos
+LLAMA_PORT=8080 SEARXNG_PORT=8081 API_PORT=8090 WEBUI_PORT=3000 ./llm web
+
+# Reducir carga de VRAM (mueve capas a RAM)
+NGL=20 CTX=4096 ./llm cli
+
+# Rutas alternativas
+MODEL=/ruta/al/modelo.gguf LLAMA_SERVER=/ruta/a/llama-server ./llm api
+```
+
+Variables disponibles:
+
+- `LLAMA_PORT`, `SEARXNG_PORT`, `API_PORT`, `WEBUI_PORT`: puertos de cada
+  servicio.
+- `NGL`: capas offload a GPU (`auto` por defecto; baja el número si te quedas
+  sin VRAM).
+- `CTX`: tamaño de contexto (por defecto 8192).
+- `BATCH`: batch size (por defecto 256).
+- `MODEL`: ruta al GGUF (por defecto `~/Proyectos/llama/models/Qwen3-30B-A3B-Q4_K_M.gguf`).
+- `LLAMA_SERVER`: ruta al binario `llama-server`.
+
+Si cambias `SEARXNG_PORT`, recuerda actualizar también `searxng/.env` y
+`agent/web_search.py`.
+
+## Herramientas por separado
+
+Las herramientas siguen funcionando como CLIs independientes:
+
+```bash
+python3 agent/web_search.py "consulta"
+python3 agent/fetch_url.py "https://ejemplo.com"
 ```
 
 ## Notas
@@ -171,6 +204,12 @@ cd searxng && docker compose down
 - La configuración de SearXNG vive en `searxng/core-config/settings.yml`
   (montado en `/etc/searxng/` del contenedor). El formato de respuesta `json`
   debe estar habilitado ahí o las búsquedas del agente fallarán con 403.
-  Tras editar el archivo: `docker compose restart core`.
+  Tras editar el archivo: `cd searxng && docker compose restart core`.
 - `Clave.txt` contiene el `secret_key` de SearXNG (el mismo valor aparece en
   `settings.yml`). Es un secreto: si se rota, hay que actualizar ambos sitios.
+- Los logs de los servicios en background se guardan en
+  `/tmp/opencode/llm-web/logs/`:
+  - `llama.log` para `llama-server`.
+  - `api.log` para la API.
+- Los archivos PID se guardan en `/tmp/opencode/llm-web/pids/`; sirven a
+  `./llm stop` para detener `llama-server` y la API.

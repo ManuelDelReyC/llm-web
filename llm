@@ -1,0 +1,345 @@
+#!/usr/bin/env bash
+# Script unificado para gestionar el stack local de llm-web.
+# Uso: ./llm {cli|api|web|stop|status}
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Configuración
+# ---------------------------------------------------------------------------
+
+LLAMA_PORT="${LLAMA_PORT:-8080}"
+SEARXNG_PORT="${SEARXNG_PORT:-8081}"
+API_PORT="${API_PORT:-8090}"
+WEBUI_PORT="${WEBUI_PORT:-3000}"
+
+LLAMA_URL="http://127.0.0.1:${LLAMA_PORT}"
+SEARXNG_URL="http://127.0.0.1:${SEARXNG_PORT}"
+API_URL="http://127.0.0.1:${API_PORT}"
+
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+SEARXNG_DIR="${REPO_DIR}/searxng"
+WEBUI_DIR="${REPO_DIR}/open-webui"
+RUN_DIR="/tmp/opencode/llm-web"
+LOG_DIR="${RUN_DIR}/logs"
+PID_DIR="${RUN_DIR}/pids"
+
+MODEL="${MODEL:-$HOME/Proyectos/llama/models/Qwen3-30B-A3B-Q4_K_M.gguf}"
+LLAMA_SERVER="${LLAMA_SERVER:-$HOME/Proyectos/llama/src/llama.cpp/build/bin/llama-server}"
+
+NGL="${NGL:-auto}"
+CTX="${CTX:-8192}"
+BATCH="${BATCH:-256}"
+
+mkdir -p "${LOG_DIR}" "${PID_DIR}"
+
+# ---------------------------------------------------------------------------
+# Utilidades
+# ---------------------------------------------------------------------------
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
+pid_file() {
+    echo "${PID_DIR}/${1}.pid"
+}
+
+save_pid() {
+    echo "$2" > "$(pid_file "$1")"
+}
+
+read_pid() {
+    cat "$(pid_file "$1")" 2>/dev/null || true
+}
+
+remove_pid() {
+    rm -f "$(pid_file "$1")"
+}
+
+is_port_open() {
+    local port="$1"
+    python3 -c "
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(1)
+result = s.connect_ex(('127.0.0.1', ${port}))
+s.close()
+sys.exit(0 if result == 0 else 1)
+" 2>/dev/null
+}
+
+wait_for_port() {
+    local port="$1"
+    local name="$2"
+    local timeout="${3:-60}"
+
+    log "Esperando a ${name} en puerto ${port}..."
+    for ((i = 0; i < timeout; i++)); do
+        if is_port_open "${port}"; then
+            log "✅ ${name} listo en puerto ${port}"
+            return 0
+        fi
+        sleep 1
+    done
+
+    log "❌ ${name} no respondió en ${timeout}s"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# Inicio de servicios
+# ---------------------------------------------------------------------------
+
+start_llama() {
+    if is_port_open "${LLAMA_PORT}"; then
+        log "✅ llama-server ya está corriendo en ${LLAMA_URL}"
+        return 0
+    fi
+
+    if [ ! -f "${MODEL}" ]; then
+        log "❌ Modelo no encontrado: ${MODEL}"
+        exit 1
+    fi
+
+    if [ ! -x "${LLAMA_SERVER}" ]; then
+        log "❌ llama-server no encontrado: ${LLAMA_SERVER}"
+        exit 1
+    fi
+
+    log "🚀 Iniciando llama-server (Qwen3-30B) en ${LLAMA_URL}..."
+    log "   Capas GPU: ${NGL} (auto = tantas como quepan)"
+    log "   Contexto: ${CTX} | Batch: ${BATCH}"
+
+    cd "${REPO_DIR}"
+    # shellcheck disable=SC2086
+    nohup "${LLAMA_SERVER}" \
+        -m "${MODEL}" \
+        --host 127.0.0.1 \
+        --port "${LLAMA_PORT}" \
+        -ngl "${NGL}" \
+        -c "${CTX}" \
+        -b "${BATCH}" \
+        -ub 128 \
+        -t 10 \
+        -n 2048 \
+        --timeout 300 \
+        --metrics \
+        --perf \
+        -ctk q8_0 \
+        -ctv q8_0 \
+        --jinja \
+        > "${LOG_DIR}/llama.log" 2>&1 \
+        &
+    save_pid llama $!
+    cd - > /dev/null
+
+    if ! wait_for_port "${LLAMA_PORT}" "llama-server" 120; then
+        log "Ver log: ${LOG_DIR}/llama.log"
+        exit 1
+    fi
+}
+
+start_searxng() {
+    if is_port_open "${SEARXNG_PORT}"; then
+        log "✅ SearXNG ya está corriendo en ${SEARXNG_URL}"
+        return 0
+    fi
+
+    log "🚀 Iniciando SearXNG en ${SEARXNG_URL}..."
+    (cd "${SEARXNG_DIR}" && docker compose up -d)
+
+    if ! wait_for_port "${SEARXNG_PORT}" "SearXNG" 60; then
+        log "Ver logs: (cd ${SEARXNG_DIR} && docker compose logs --tail=50 core)"
+        exit 1
+    fi
+}
+
+start_api() {
+    local host="${1:-127.0.0.1}"
+
+    if is_port_open "${API_PORT}"; then
+        log "✅ API ya está corriendo en puerto ${API_PORT}"
+        return 0
+    fi
+
+    if [ ! -d "${REPO_DIR}/.venv" ]; then
+        log "❌ No existe ${REPO_DIR}/.venv. Crea el entorno virtual primero."
+        exit 1
+    fi
+
+    log "🚀 Iniciando API en ${host}:${API_PORT}..."
+    cd "${REPO_DIR}"
+    LLAMA_URL="${LLAMA_URL}" API_HOST="${host}" API_PORT="${API_PORT}" \
+        nohup "${REPO_DIR}/.venv/bin/uvicorn" server.main:app \
+        --host "${host}" --port "${API_PORT}" \
+        > "${LOG_DIR}/api.log" 2>&1 \
+        &
+    save_pid api $!
+    cd - > /dev/null
+
+    if ! wait_for_port "${API_PORT}" "API" 60; then
+        log "Ver log: ${LOG_DIR}/api.log"
+        exit 1
+    fi
+}
+
+start_webui() {
+    if is_port_open "${WEBUI_PORT}"; then
+        log "✅ Open WebUI ya está corriendo en http://localhost:${WEBUI_PORT}"
+        return 0
+    fi
+
+    log "🚀 Iniciando Open WebUI en http://localhost:${WEBUI_PORT}..."
+    (cd "${WEBUI_DIR}" && OPEN_WEBUI_PORT="${WEBUI_PORT}" docker compose up -d)
+
+    if ! wait_for_port "${WEBUI_PORT}" "Open WebUI" 120; then
+        log "Open WebUI puede estar descargando el modelo de embeddings."
+        log "Ver logs: (cd ${WEBUI_DIR} && docker compose logs --tail=50)"
+        exit 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Parada de servicios
+# ---------------------------------------------------------------------------
+
+stop_service() {
+    local name="$1"
+    local pid
+    pid="$(read_pid "${name}")"
+
+    if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+        log "🛑 Deteniendo ${name} (PID ${pid})..."
+        kill -TERM "${pid}" 2>/dev/null || true
+        for ((i = 0; i < 30; i++)); do
+            if ! kill -0 "${pid}" 2>/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+        if kill -0 "${pid}" 2>/dev/null; then
+            log "Forzando cierre de ${name}..."
+            kill -KILL "${pid}" 2>/dev/null || true
+        fi
+    fi
+
+    remove_pid "${name}"
+}
+
+stop_all() {
+    log "🛑 Deteniendo servicios..."
+
+    if [ -d "${WEBUI_DIR}" ]; then
+        (cd "${WEBUI_DIR}" && docker compose down 2>/dev/null) || true
+    fi
+
+    stop_service api
+
+    if [ -d "${SEARXNG_DIR}" ]; then
+        (cd "${SEARXNG_DIR}" && docker compose down 2>/dev/null) || true
+    fi
+
+    stop_service llama
+
+    log "✅ Todo detenido"
+}
+
+# ---------------------------------------------------------------------------
+# Estado
+# ---------------------------------------------------------------------------
+
+status() {
+    echo "Estado de los servicios:"
+    local item name port
+    for item in "llama-server:${LLAMA_PORT}" "SearXNG:${SEARXNG_PORT}" "API:${API_PORT}" "Open WebUI:${WEBUI_PORT}"; do
+        name="${item%:*}"
+        port="${item#*:}"
+        if is_port_open "${port}"; then
+            echo "  ✅ ${name} en puerto ${port}"
+        else
+            echo "  ❌ ${name} detenido"
+        fi
+    done
+}
+
+# ---------------------------------------------------------------------------
+# Modos de uso
+# ---------------------------------------------------------------------------
+
+run_cli() {
+    log "🖥️  Modo CLI interactivo."
+    log "   Escribe tu pregunta, /debug para traza, /clear para borrar historial, /quit para salir."
+    cd "${REPO_DIR}"
+    python3 agent/agent.py
+}
+
+run_api() {
+    start_llama
+    start_searxng
+    start_api 127.0.0.1
+
+    log ""
+    log "✅ API lista en ${API_URL}"
+    log "   Logs: ${LOG_DIR}/api.log"
+    log "   Presiona Ctrl+C para detener todo."
+    log ""
+
+    trap stop_all INT TERM
+    wait
+}
+
+run_web() {
+    start_llama
+    start_searxng
+    start_api 0.0.0.0
+    start_webui
+
+    log ""
+    log "✅ Open WebUI listo en http://localhost:${WEBUI_PORT}"
+    log "   API expuesta a Docker en 0.0.0.0:${API_PORT}"
+    log "   Logs: ${LOG_DIR}/"
+    log "   Presiona Ctrl+C para detener todo."
+    log ""
+
+    trap stop_all INT TERM
+    wait
+}
+
+# ---------------------------------------------------------------------------
+# Entrada principal
+# ---------------------------------------------------------------------------
+
+case "${1:-}" in
+    cli)
+        start_llama
+        start_searxng
+        run_cli
+        ;;
+    api)
+        run_api
+        ;;
+    web)
+        run_web
+        ;;
+    stop)
+        stop_all
+        ;;
+    status)
+        status
+        ;;
+    *)
+        echo "Uso: $0 {cli|api|web|stop|status}"
+        echo ""
+        echo "  cli     Terminal interactiva (llama-server + SearXNG + agente)"
+        echo "  api     Solo API en ${API_URL} (para OpenCode u otras apps)"
+        echo "  web     Navegador con Open WebUI (todo el stack)"
+        echo "  stop    Detener todos los servicios"
+        echo "  status  Ver qué servicios están corriendo"
+        echo ""
+        echo "Variables de entorno útiles:"
+        echo "  LLAMA_PORT, SEARXNG_PORT, API_PORT, WEBUI_PORT"
+        echo "  NGL, CTX, BATCH (perfil del modelo 30B)"
+        exit 1
+        ;;
+esac
