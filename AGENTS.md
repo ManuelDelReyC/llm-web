@@ -28,11 +28,12 @@ con un error.
 ### Modos de uso con `./llm`
 
 ```bash
-./llm cli      # Terminal interactiva (llama-server + SearXNG + agente)
-./llm api      # Solo API en http://127.0.0.1:8090
-./llm web      # Navegador con Open WebUI (todo el stack)
-./llm status   # Ver qué servicios están corriendo
-./llm stop     # Detener todo
+./llm cli          # Terminal interactiva (llama-server + SearXNG + agente)
+./llm api          # Solo API en http://127.0.0.1:8090
+./llm web          # Navegador con Open WebUI (todo el stack)
+./llm status       # Ver qué servicios están corriendo
+./llm stop         # Detener todo
+./llm webui-reset  # Restablecer la contraseña de admin de Open WebUI
 ```
 
 ### Comandos individuales (legacy / depuración)
@@ -123,15 +124,16 @@ es ejecutar `agent/agent.py` o `./llm cli` contra los servicios activos.
 
 ## OpenCode
 
-La Fase 3 añade soporte para usar este proyecto como backend de OpenCode.
-Hay dos opciones; la recomendada es la **opción A** porque reutiliza la
-misma lógica de agente probada en CLI, API y Open WebUI.
+La configuración de `opencode.json` apunta OpenCode directamente a
+llama-server (`http://127.0.0.1:8080/v1`) y le da acceso a la búsqueda web
+local a través del servidor MCP `mcp/web_search.py`. OpenCode orquesta el
+bucle de herramientas: decide cuándo buscar, cuándo leer archivos, cuándo
+ejecutar un comando, etc.
 
-### Opción A — proveedor personalizado contra la API (recomendada)
-
-Con la API arrancada (`./llm api`), el archivo
-`opencode.json` del repo registra automáticamente el proveedor `llm-web`
-con `baseURL` `http://127.0.0.1:8090/v1`.
+Para que esto funcione, `./llm` arranca llama-server con
+`Qwen3-Coder-30B-A3B-Instruct.Q4_K_M` y una ventana de contexto de 32768
+tokens. El modelo Coder sigue los esquemas de tool calls mucho mejor que el
+modelo de chat general y es el que la comunidad usa con agentes locales.
 
 ```bash
 # Desde la raíz del repo, donde se encuentra opencode.json.
@@ -144,67 +146,20 @@ La primera vez puede ser necesario seleccionar el modelo:
 opencode models   # o /models dentro del TUI
 ```
 
-Elige `llm-web/local-model`. Como la API ejecuta el bucle agente completo
-(incluyendo `web_search` y `fetch_url`), OpenCode recibe directamente la
-respuesta final sin necesidad de herramientas adicionales.
+Elige `llama/qwen3-coder`. Si quieres que busque información actual,
+indícalo explícitamente en el prompt (por ejemplo, "busca en la web
+primero"); de lo contrario OpenCode puede no invocar `web_search`.
 
-### Opción B — llama-server directo + herramientas MCP (fallback)
+### Volver al modelo de chat general
 
-Si la opción A no da buenos resultados (por ejemplo, el modelo local no
-responde bien al formato de tool calls que espera OpenCode), se puede
-apuntar OpenCode directamente a llama-server y darle las herramientas web
-como servidores MCP.
+Si prefieres usar el Qwen3-30B general para CLI/Open WebUI, arranca con:
 
-Sustituye la sección `provider` y añade `mcp` en `opencode.json`:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "provider": {
-    "llama.cpp": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "llama-server (directo)",
-      "options": {
-        "baseURL": "http://127.0.0.1:8080/v1"
-      },
-      "models": {
-        "local-model": {
-          "name": "Qwen3 local (directo)",
-          "limit": {
-            "context": 32768,
-            "output": 4096
-          }
-        }
-      }
-    }
-  },
-  "model": "llama.cpp/local-model",
-  "small_model": "llama.cpp/local-model",
-  "mcp": {
-    "llm-web-search": {
-      "type": "local",
-      "command": ["python3", "mcp/web_search.py"],
-      "enabled": true
-    },
-    "llm-web-fetch": {
-      "type": "local",
-      "command": ["python3", "mcp/fetch_url.py"],
-      "enabled": true
-    }
-  }
-}
+```bash
+MODEL="$HOME/Proyectos/llama/models/Qwen3-30B-A3B-Q4_K_M.gguf" ./llm cli
 ```
 
-En este modo OpenCode es el que orquesta el bucle de herramientas, así que
-es conveniente añadir en los prompts algo como "usa web_search" cuando se
-necesite información actual.
-
-### Decisión
-
-Por defecto se usa la **opción A**: es la más sencilla, mantiene un solo
-punto de lógica (la API) y ha funcionado en CLI y Open WebUI. La opción B
-se mantiene como alternativa documentada por si el modelo local muestra
-problemas de tool calling a través del proveedor OpenAI-compatible.
+OpenCode seguirá conectándose a llama-server, así que elige el modelo Coder
+cuando vayas a programar con OpenCode.
 
 ## Files to ignore / handle with care
 

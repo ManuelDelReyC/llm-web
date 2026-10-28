@@ -18,13 +18,15 @@ Todo se gestiona con un único script: **`./llm`**.
 | `searxng/` | SearXNG en Docker Compose, en `http://127.0.0.1:8081` (puerto configurable en `searxng/.env`). |
 | `server/main.py` | API compatible con OpenAI (`/v1/chat/completions` y `/v1/models`) que expone el agente. |
 | `open-webui/` | Open WebUI en Docker, preconfigurado contra la API propia. |
-| `opencode.json` | Configuración de OpenCode para usar la API local como proveedor personalizado. |
+| `opencode.json` | Configuración de OpenCode para usar llama-server directamente y la búsqueda web local como MCP. |
 | `mcp/web_search.py` | Servidor MCP con la herramienta `web_search` (plan B). |
 | `mcp/fetch_url.py` | Servidor MCP con la herramienta `fetch_url` (plan B). |
 
 El agente detecta automáticamente el modelo cargado consultando
 `/v1/models` del servidor, así que **no hay que editar ningún nombre de
-modelo**. El único perfil disponible es Qwen3-30B-A3B-Q4_K_M.
+modelo**. El perfil por defecto es `Qwen3-Coder-30B-A3B-Instruct.Q4_K_M`
+para que OpenCode pueda programar con él. El modelo de chat general sigue
+disponible mediante la variable `MODEL`.
 
 ## Requisitos
 
@@ -37,7 +39,7 @@ modelo**. El único perfil disponible es Qwen3-30B-A3B-Q4_K_M.
 
 ```bash
 ./llm cli     # Terminal interactiva
-./llm api     # Solo API (para OpenCode u otras apps)
+./llm api     # Solo API (para otras apps)
 ./llm web     # Navegador con Open WebUI
 ./llm status  # Ver qué está corriendo
 ./llm stop    # Parar todo
@@ -121,17 +123,35 @@ actual; el agente usará `web_search` automáticamente.
 > embeddings desde Hugging Face, lo que puede tardar varios minutos. Hasta
 > entonces la interfaz puede no responder.
 
-### 4. OpenCode
+#### Recuperar el acceso a Open WebUI
 
-El archivo `opencode.json` del repo configura OpenCode para que use la API
-local como proveedor personalizado (`http://127.0.0.1:8090/v1`). De este modo
-OpenCode se beneficia del mismo bucle agente que la CLI y Open WebUI.
+Si olvidas la contraseña del administrador, no hace falta borrar el volumen ni
+perder los chats:
 
 ```bash
-# Asegúrate de que la API está en marcha.
-./llm api
+./llm webui-reset
+```
 
+El comando pide una contraseña nueva, la guarda en la base de datos SQLite de
+Open WebUI y conserva usuarios, conversaciones y ajustes. Si Open WebUI está
+corriendo, lo detiene temporalmente, actualiza el hash bcrypt del usuario
+administrador y lo vuelve a arrancar. Entra con el email que imprime el
+comando (en esta instalación, `admin@localhost`) y la contraseña que acabas
+de escribir en el terminal, no con la que recuerde el navegador.
+
+### 4. OpenCode
+
+El archivo `opencode.json` configura OpenCode para que hable directamente con
+llama-server (`http://127.0.0.1:8080/v1`) y use la búsqueda web local a través
+de un servidor MCP (`mcp/web_search.py`). OpenCode es el que decide cuándo
+buscar, leer archivos o ejecutar comandos.
+
+```bash
 # Desde la raíz del repo, donde está opencode.json.
+# El comando arranca llama-server con el modelo Coder y SearXNG.
+./llm cli
+
+# En otra terminal, con los servicios en marcha:
 opencode run "¿Cuál es la última versión estable de Python?"
 ```
 
@@ -141,12 +161,11 @@ La primera vez selecciona el modelo:
 opencode models   # o /models dentro del TUI
 ```
 
-Elige `llm-web/local-model`.
+Elige `llama/qwen3-coder`.
 
-Si el proveedor personalizado no funciona bien con el modelo cargado, existe
-un plan B documentado en `AGENTS.md`: apuntar OpenCode directamente a
-llama-server y usar `mcp/web_search.py` y `mcp/fetch_url.py` como servidores
-MCP.
+Si quieres que OpenCode busque información actual, indícalo en el prompt
+(por ejemplo, "busca en la web primero"). De lo contrario puede no invocar
+`web_search`.
 
 ### 5. Parar los servicios
 

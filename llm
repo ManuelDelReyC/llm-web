@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Script unificado para gestionar el stack local de llm-web.
-# Uso: ./llm {cli|api|web|stop|status}
+# Uso: ./llm {cli|api|web|stop|status|webui-reset}
 
 set -euo pipefail
 
@@ -24,11 +24,11 @@ RUN_DIR="/tmp/opencode/llm-web"
 LOG_DIR="${RUN_DIR}/logs"
 PID_DIR="${RUN_DIR}/pids"
 
-MODEL="${MODEL:-$HOME/Proyectos/llama/models/Qwen3-30B-A3B-Q4_K_M.gguf}"
+MODEL="${MODEL:-$HOME/Proyectos/llama/models/Qwen3-Coder-30B-A3B-Instruct.Q4_K_M.gguf}"
 LLAMA_SERVER="${LLAMA_SERVER:-$HOME/Proyectos/llama/src/llama.cpp/build/bin/llama-server}"
 
 NGL="${NGL:-auto}"
-CTX="${CTX:-8192}"
+CTX="${CTX:-32768}"
 BATCH="${BATCH:-256}"
 
 mkdir -p "${LOG_DIR}" "${PID_DIR}"
@@ -107,7 +107,7 @@ start_llama() {
         exit 1
     fi
 
-    log "🚀 Iniciando llama-server (Qwen3-30B) en ${LLAMA_URL}..."
+    log "🚀 Iniciando llama-server (Qwen3-Coder-30B) en ${LLAMA_URL}..."
     log "   Capas GPU: ${NGL} (auto = tantas como quepan)"
     log "   Contexto: ${CTX} | Batch: ${BATCH}"
 
@@ -264,6 +264,158 @@ status() {
 }
 
 # ---------------------------------------------------------------------------
+# Recuperación de acceso a Open WebUI
+# ---------------------------------------------------------------------------
+
+webui_reset() {
+    local volume_name="open-webui_open-webui-data"
+    local image="ghcr.io/open-webui/open-webui:main"
+    local was_running=false
+    local pass1 pass2
+    local reset_output admin_email admin_name
+
+    if ! docker info >/dev/null 2>&1; then
+        log "❌ Docker no está disponible."
+        exit 1
+    fi
+
+    if ! docker volume inspect "${volume_name}" >/dev/null 2>&1; then
+        log "❌ No existe el volumen ${volume_name}."
+        log "   Arranca Open WebUI al menos una vez con ./llm web antes de restablecer la contraseña."
+        exit 1
+    fi
+
+    if docker ps --format '{{.Names}}' | grep -qx "open-webui"; then
+        was_running=true
+    fi
+
+    if [ "${was_running}" = true ]; then
+        log "🛑 Deteniendo Open WebUI para modificar la base de datos..."
+        (cd "${WEBUI_DIR}" && docker compose stop) || true
+    fi
+
+    read -rsp "Nueva contraseña de administrador: " pass1
+    echo
+    read -rsp "Repite la contraseña: " pass2
+    echo
+
+    if [ "${pass1}" != "${pass2}" ]; then
+        log "❌ Las contraseñas no coinciden."
+        if [ "${was_running}" = true ]; then
+            log "🚀 Volviendo a arrancar Open WebUI..."
+            (cd "${WEBUI_DIR}" && docker compose start) || true
+        fi
+        exit 1
+    fi
+
+    if [ -z "${pass1}" ]; then
+        log "❌ La contraseña no puede estar vacía."
+        if [ "${was_running}" = true ]; then
+            log "🚀 Volviendo a arrancar Open WebUI..."
+            (cd "${WEBUI_DIR}" && docker compose start) || true
+        fi
+        exit 1
+    fi
+
+    log "🔄 Restableciendo contraseña..."
+
+    # El script va en un fichero montado. No se puede pasar con un heredoc:
+    # python3 - leería el programa por stdin y la contraseña se perdería.
+    mkdir -p /tmp/opencode
+    reset_script="$(mktemp /tmp/opencode/webui-reset.XXXXXX.py)"
+    cat > "${reset_script}" << 'PY'
+import bcrypt
+import sqlite3
+import sys
+import uuid
+
+password = sys.stdin.readline().rstrip("\n")
+if not password:
+    print("ERROR: la contraseña llegó vacía al contenedor.", file=sys.stderr)
+    sys.exit(1)
+
+conn = sqlite3.connect("/data/webui.db")
+conn.row_factory = sqlite3.Row
+cur = conn.cursor()
+
+cur.execute("""
+    SELECT a.id, a.email, u.name, u.role
+    FROM auth a
+    JOIN user u ON a.id = u.id
+    WHERE u.role = 'admin'
+""")
+admins = cur.fetchall()
+
+if not admins:
+    print("ERROR: no hay ningún usuario administrador.", file=sys.stderr)
+    sys.exit(1)
+
+if len(admins) > 1:
+    print("ERROR: hay varios administradores; elige uno manualmente.", file=sys.stderr)
+    for admin in admins:
+        print(f"  - {admin['email']} ({admin['name']})", file=sys.stderr)
+    sys.exit(1)
+
+admin = admins[0]
+password_bytes = password.encode("utf-8")
+hashed = bcrypt.hashpw(password_bytes, bcrypt.gensalt(rounds=12)).decode()
+if not bcrypt.checkpw(password_bytes, hashed.encode("utf-8")):
+    print("ERROR: el hash generado no coincide con la contraseña.", file=sys.stderr)
+    sys.exit(1)
+
+cur.execute(
+    "UPDATE auth SET password = ?, active = 1, session_stamp = ? WHERE id = ?",
+    (hashed, str(uuid.uuid4()), admin["id"]),
+)
+conn.commit()
+
+stored = cur.execute("SELECT password FROM auth WHERE id = ?", (admin["id"],)).fetchone()[0]
+if not bcrypt.checkpw(password_bytes, stored.encode("utf-8")):
+    print("ERROR: la base no guardó la contraseña.", file=sys.stderr)
+    sys.exit(1)
+
+print(f"EMAIL:{admin['email']}")
+print(f"NAME:{admin['name']}")
+PY
+
+    if ! reset_output=$(printf '%s\n' "${pass1}" | docker run --rm -i --entrypoint python3 \
+        -v "${volume_name}:/data" \
+        -v "${reset_script}:/reset.py:ro" \
+        "${image}" /reset.py); then
+        rm -f "${reset_script}"
+        unset pass1 pass2
+        log "❌ No se pudo restablecer la contraseña."
+        if [ "${was_running}" = true ]; then
+            log "🚀 Volviendo a arrancar Open WebUI..."
+            (cd "${WEBUI_DIR}" && docker compose start) || true
+        fi
+        exit 1
+    fi
+    rm -f "${reset_script}"
+    unset pass1 pass2
+
+    admin_email=$(echo "${reset_output}" | sed -n 's/^EMAIL://p')
+    admin_name=$(echo "${reset_output}" | sed -n 's/^NAME://p')
+
+    if [ -z "${admin_email}" ]; then
+        log "❌ No se pudo restablecer la contraseña."
+        if [ "${was_running}" = true ]; then
+            log "🚀 Volviendo a arrancar Open WebUI..."
+            (cd "${WEBUI_DIR}" && docker compose start) || true
+        fi
+        exit 1
+    fi
+
+    if [ "${was_running}" = true ]; then
+        log "🚀 Arrancando Open WebUI..."
+        (cd "${WEBUI_DIR}" && docker compose start)
+    fi
+
+    log "✅ Contraseña restablecida para ${admin_name} <${admin_email}>."
+    log "   Entra en http://localhost:${WEBUI_PORT} con ese email y la contraseña nueva."
+}
+
+# ---------------------------------------------------------------------------
 # Modos de uso
 # ---------------------------------------------------------------------------
 
@@ -328,14 +480,18 @@ case "${1:-}" in
     status)
         status
         ;;
+    webui-reset)
+        webui_reset
+        ;;
     *)
-        echo "Uso: $0 {cli|api|web|stop|status}"
+        echo "Uso: $0 {cli|api|web|stop|status|webui-reset}"
         echo ""
-        echo "  cli     Terminal interactiva (llama-server + SearXNG + agente)"
-        echo "  api     Solo API en ${API_URL} (para OpenCode u otras apps)"
-        echo "  web     Navegador con Open WebUI (todo el stack)"
-        echo "  stop    Detener todos los servicios"
-        echo "  status  Ver qué servicios están corriendo"
+        echo "  cli          Terminal interactiva (llama-server + SearXNG + agente)"
+        echo "  api          Solo API en ${API_URL} (para OpenCode u otras apps)"
+        echo "  web          Navegador con Open WebUI (todo el stack)"
+        echo "  stop         Detener todos los servicios"
+        echo "  status       Ver qué servicios están corriendo"
+        echo "  webui-reset  Restablecer la contraseña de admin de Open WebUI"
         echo ""
         echo "Variables de entorno útiles:"
         echo "  LLAMA_PORT, SEARXNG_PORT, API_PORT, WEBUI_PORT"

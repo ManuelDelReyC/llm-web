@@ -1,15 +1,25 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "provider": {
-    "llm-web": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "llm-web (API local)",
-      "options": {
-        "baseURL": "http://127.0.0.1:8090/v1"
+  "model": "llama/qwen3-coder",
+  "providers": {
+    "llama": {
+      "name": "llama-server (local)",
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "http://127.0.0.1:8080/v1"
       },
       "models": {
-        "local-model": {
-          "name": "Qwen3 local (vía llm-web API)",
+        "qwen3-coder": {
+          "name": "Qwen3-Coder-30B-A3B local",
+          "modelID": "local-model",
+          "capabilities": {
+            "tools": true,
+            "input": ["text"],
+            "output": ["text"]
+          },
+          "compatibility": {
+            "maxTokensField": "max_tokens"
+          },
           "limit": {
             "context": 32768,
             "output": 4096
@@ -18,6 +28,12 @@
       }
     }
   },
-  "model": "llm-web/local-model",
-  "small_model": "llm-web/local-model"
+  "mcp": {
+    "servers": {
+      "llm-web-search": {
+        "type": "local",
+        "command": ["python3", "mcp/web_search.py"]
+      }
+    }
+  }
 }
