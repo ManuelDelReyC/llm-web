@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Script unificado para gestionar el stack local de llm-web.
-# Uso: ./llm {cli|api|web|stop|status|webui-reset}
+# Uso: ./llm {cli|api|web|models|stop|status|webui-reset}
 
 set -euo pipefail
 
@@ -24,7 +24,29 @@ RUN_DIR="/tmp/opencode/llm-web"
 LOG_DIR="${RUN_DIR}/logs"
 PID_DIR="${RUN_DIR}/pids"
 
-MODEL="${MODEL:-$HOME/Proyectos/llama/models/Qwen3-Coder-30B-A3B-Instruct.Q4_K_M.gguf}"
+# ---------------------------------------------------------------------------
+# Configuración de modelos (models.conf)
+# ---------------------------------------------------------------------------
+
+MODELS_CONF="${REPO_DIR}/models.conf"
+
+# Valores por defecto, por si models.conf no existe o faltan claves.
+DEFAULT_MODELS_DIR="$HOME/Proyectos/llama/models"
+DEFAULT_API_MODEL="Qwen3-Coder-30B-A3B-Instruct.Q4_K_M.gguf"
+DEFAULT_WEB_MODEL="Qwen3-30B-A3B-Q4_K_M.gguf"
+DEFAULT_CLI_MODEL="Qwen3-30B-A3B-Q4_K_M.gguf"
+
+# shellcheck disable=SC1090
+[ -f "${MODELS_CONF}" ] && source "${MODELS_CONF}"
+
+MODELS_DIR="${MODELS_DIR:-${DEFAULT_MODELS_DIR}}"
+API_MODEL="${API_MODEL:-${DEFAULT_API_MODEL}}"
+WEB_MODEL="${WEB_MODEL:-${DEFAULT_WEB_MODEL}}"
+CLI_MODEL="${CLI_MODEL:-${DEFAULT_CLI_MODEL}}"
+
+# Modo activo: se establece antes de arrancar llama-server (api/web/cli).
+CURRENT_MODE=""
+
 LLAMA_SERVER="${LLAMA_SERVER:-$HOME/Proyectos/llama/src/llama.cpp/build/bin/llama-server}"
 
 NGL="${NGL:-auto}"
@@ -88,18 +110,102 @@ wait_for_port() {
 }
 
 # ---------------------------------------------------------------------------
+# Utilidades de modelos
+# ---------------------------------------------------------------------------
+
+resolve_model() {
+    local mode="${1:-api}"
+    local resolved=""
+
+    # Si MODEL ya está en el entorno, tiene prioridad absoluta.
+    if [ -n "${MODEL:-}" ]; then
+        echo "${MODEL}"
+        return 0
+    fi
+
+    case "${mode}" in
+        api)  resolved="${API_MODEL}" ;;
+        web)  resolved="${WEB_MODEL}" ;;
+        cli)  resolved="${CLI_MODEL}" ;;
+        *)    resolved="${API_MODEL}" ;;
+    esac
+
+    # Si no contiene barras, se asume relativo a MODELS_DIR.
+    if [[ "${resolved}" != */* ]]; then
+        resolved="${MODELS_DIR}/${resolved}"
+    fi
+
+    echo "${resolved}"
+}
+
+list_models() {
+    local dir="${MODELS_DIR}"
+
+    if [ ! -d "${dir}" ]; then
+        echo ""
+        return 0
+    fi
+
+    find "${dir}" -maxdepth 1 -type f -name '*.gguf' \
+        ! -name 'mmproj-*' \
+        ! -regex '.*-[0-9][0-9][0-9][0-9][0-9]-of-[0-9][0-9][0-9][0-9][0-9]\.gguf$' \
+        -printf '%f\n' 2>/dev/null | sort || true
+}
+
+llama_loaded_model() {
+    python3 - <<PY 2>/dev/null
+import json, urllib.request, sys
+try:
+    with urllib.request.urlopen("${LLAMA_URL}/v1/models", timeout=3) as r:
+        data = json.load(r)
+    models = data.get("data", [])
+    if models:
+        print(models[0].get("id", ""))
+except Exception:
+    print("")
+PY
+}
+
+llama_model_matches() {
+    local model_path="$1"
+    local filename
+    filename="$(basename "${model_path}")"
+    local loaded
+    loaded="$(llama_loaded_model)"
+
+    if [ -z "${loaded}" ]; then
+        return 1
+    fi
+
+    if [ "${loaded}" = "${filename}" ] || [ "${loaded}" = "local-model" ]; then
+        return 0
+    fi
+
+    return 1
+}
+
+# ---------------------------------------------------------------------------
 # Inicio de servicios
 # ---------------------------------------------------------------------------
 
 start_llama() {
-    if is_port_open "${LLAMA_PORT}"; then
-        log "✅ llama-server ya está corriendo en ${LLAMA_URL}"
-        return 0
-    fi
+    local mode="${CURRENT_MODE:-api}"
+    MODEL="$(resolve_model "${mode}")"
 
     if [ ! -f "${MODEL}" ]; then
         log "❌ Modelo no encontrado: ${MODEL}"
         exit 1
+    fi
+
+    if is_port_open "${LLAMA_PORT}"; then
+        if llama_model_matches "${MODEL}"; then
+            log "✅ llama-server ya está corriendo en ${LLAMA_URL} con ${MODEL}"
+            return 0
+        else
+            log "🔄 llama-server usa un modelo distinto; reiniciando..."
+            stop_service llama
+            sleep 1
+        fi
     fi
 
     if [ ! -x "${LLAMA_SERVER}" ]; then
@@ -107,7 +213,7 @@ start_llama() {
         exit 1
     fi
 
-    log "🚀 Iniciando llama-server (Qwen3-Coder-30B) en ${LLAMA_URL}..."
+    log "🚀 Iniciando llama-server (${mode}) con $(basename "${MODEL}") en ${LLAMA_URL}..."
     log "   Capas GPU: ${NGL} (auto = tantas como quepan)"
     log "   Contexto: ${CTX} | Batch: ${BATCH}"
 
@@ -426,13 +532,55 @@ run_cli() {
     python3 agent/agent.py
 }
 
+print_models() {
+    local mode api_file web_file cli_file loaded current
+    api_file="${API_MODEL}"
+    web_file="${WEB_MODEL}"
+    cli_file="${CLI_MODEL}"
+    loaded="$(llama_loaded_model)"
+    if [ -n "${loaded}" ]; then
+        loaded="$(basename "${loaded}")"
+    fi
+
+    echo "Modelos configurados (${MODELS_CONF}):"
+    printf "  API: %s\n" "${api_file}"
+    printf "  Web: %s\n" "${web_file}"
+    printf "  CLI: %s\n" "${cli_file}"
+
+    if [ -n "${loaded}" ]; then
+        printf "\nModelo cargado en llama-server: %s\n" "${loaded}"
+    fi
+
+    echo ""
+    echo "Modelos disponibles en ${MODELS_DIR}:"
+    if [ ! -d "${MODELS_DIR}" ]; then
+        echo "  (directorio no existe)"
+        return 0
+    fi
+
+    local model
+    while IFS= read -r model; do
+        [ -z "${model}" ] && continue
+        current=""
+        [ "${model}" = "${api_file}" ] && current=" [API]"
+        [ "${model}" = "${web_file}" ] && current=" [Web]"
+        [ "${model}" = "${cli_file}" ] && current=" [CLI]"
+        if [ -n "${loaded}" ] && { [ "${model}" = "${loaded}" ] || [ "local-model" = "${loaded}" ]; }; then
+            current="${current} (cargado)"
+        fi
+        printf "  - %s%s\n" "${model}" "${current}"
+    done < <(list_models)
+}
+
 run_api() {
+    CURRENT_MODE="api"
     start_llama
     start_searxng
     start_api 127.0.0.1
 
     log ""
     log "✅ API lista en ${API_URL}"
+    log "   Modelo: ${MODEL}"
     log "   Logs: ${LOG_DIR}/api.log"
     log "   Presiona Ctrl+C para detener todo."
     log ""
@@ -442,6 +590,7 @@ run_api() {
 }
 
 run_web() {
+    CURRENT_MODE="web"
     start_llama
     start_searxng
     start_api 0.0.0.0
@@ -449,6 +598,7 @@ run_web() {
 
     log ""
     log "✅ Open WebUI listo en http://localhost:${WEBUI_PORT}"
+    log "   Modelo: ${MODEL}"
     log "   API expuesta a Docker en 0.0.0.0:${API_PORT}"
     log "   Logs: ${LOG_DIR}/"
     log "   Presiona Ctrl+C para detener todo."
@@ -458,21 +608,29 @@ run_web() {
     wait
 }
 
+run_cli_mode() {
+    CURRENT_MODE="cli"
+    start_llama
+    start_searxng
+    run_cli
+}
+
 # ---------------------------------------------------------------------------
 # Entrada principal
 # ---------------------------------------------------------------------------
 
 case "${1:-}" in
     cli)
-        start_llama
-        start_searxng
-        run_cli
+        run_cli_mode
         ;;
     api)
         run_api
         ;;
     web)
         run_web
+        ;;
+    models)
+        print_models
         ;;
     stop)
         stop_all
@@ -484,18 +642,21 @@ case "${1:-}" in
         webui_reset
         ;;
     *)
-        echo "Uso: $0 {cli|api|web|stop|status|webui-reset}"
+        echo "Uso: $0 {cli|api|web|models|stop|status|webui-reset}"
         echo ""
         echo "  cli          Terminal interactiva (llama-server + SearXNG + agente)"
-        echo "  api          Solo API en ${API_URL} (para OpenCode u otras apps)"
-        echo "  web          Navegador con Open WebUI (todo el stack)"
+        echo "  api          Solo API en ${API_URL} (modelo Coder para OpenCode)"
+        echo "  web          Navegador con Open WebUI (modelo de chat general)"
+        echo "  models       Listar modelos configurados y disponibles"
         echo "  stop         Detener todos los servicios"
         echo "  status       Ver qué servicios están corriendo"
         echo "  webui-reset  Restablecer la contraseña de admin de Open WebUI"
         echo ""
+        echo "Configuración: ${MODELS_CONF}"
         echo "Variables de entorno útiles:"
         echo "  LLAMA_PORT, SEARXNG_PORT, API_PORT, WEBUI_PORT"
         echo "  NGL, CTX, BATCH (perfil del modelo 30B)"
+        echo "  MODEL=/ruta/modelo.gguf (sobrescribe la configuración por modo)"
         exit 1
         ;;
 esac

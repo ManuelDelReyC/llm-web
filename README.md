@@ -24,9 +24,17 @@ Todo se gestiona con un único script: **`./llm`**.
 
 El agente detecta automáticamente el modelo cargado consultando
 `/v1/models` del servidor, así que **no hay que editar ningún nombre de
-modelo**. El perfil por defecto es `Qwen3-Coder-30B-A3B-Instruct.Q4_K_M`
-para que OpenCode pueda programar con él. El modelo de chat general sigue
-disponible mediante la variable `MODEL`.
+modelo en el agente**. Los modelos que usa cada modo se configuran en
+[`models.conf`](models.conf):
+
+```bash
+API_MODEL=Qwen3-Coder-30B-A3B-Instruct.Q4_K_M.gguf   # ./llm api
+WEB_MODEL=Qwen3-30B-A3B-Q4_K_M.gguf                  # ./llm web
+CLI_MODEL=Qwen3-30B-A3B-Q4_K_M.gguf                  # ./llm cli
+```
+
+Puedes cambiar `MODELS_DIR` si tus GGUF están en otro sitio. Para una
+selección puntual sin editar el fichero, usa `MODEL=/ruta/modelo.gguf`.
 
 ## Requisitos
 
@@ -39,8 +47,9 @@ disponible mediante la variable `MODEL`.
 
 ```bash
 ./llm cli     # Terminal interactiva
-./llm api     # Solo API (para otras apps)
-./llm web     # Navegador con Open WebUI
+./llm api     # Solo API (modelo Coder, para OpenCode u otras apps)
+./llm web     # Navegador con Open WebUI (modelo de chat general)
+./llm models  # Listar modelos configurados y disponibles
 ./llm status  # Ver qué está corriendo
 ./llm stop    # Parar todo
 ```
@@ -49,11 +58,11 @@ Cada comando arranca solo los servicios que necesita, espera a que estén
 listos y reutiliza los que ya estén corriendo. Los modos `api` y `web` se
 quedan en primer plano; presiona `Ctrl+C` para detener todo.
 
-| Modo | Servicios levantados |
-| --- | --- |
-| `cli` | llama-server + SearXNG + agente interactivo |
-| `api` | llama-server + SearXNG + API en `http://127.0.0.1:8090` |
-| `web` | llama-server + SearXNG + API (`0.0.0.0:8090`) + Open WebUI |
+| Modo | Servicios levantados | Modelo por defecto |
+| --- | --- | --- |
+| `cli` | llama-server + SearXNG + agente interactivo | Qwen3-30B-A3B-Q4_K_M |
+| `api` | llama-server + SearXNG + API en `http://127.0.0.1:8090` | Qwen3-Coder-30B-A3B |
+| `web` | llama-server + SearXNG + API (`0.0.0.0:8090`) + Open WebUI | Qwen3-30B-A3B-Q4_K_M |
 
 ## Puesta en marcha
 
@@ -149,7 +158,7 @@ buscar, leer archivos o ejecutar comandos.
 ```bash
 # Desde la raíz del repo, donde está opencode.json.
 # El comando arranca llama-server con el modelo Coder y SearXNG.
-./llm cli
+./llm api
 
 # En otra terminal, con los servicios en marcha:
 opencode run "¿Cuál es la última versión estable de Python?"
@@ -162,6 +171,23 @@ opencode models   # o /models dentro del TUI
 ```
 
 Elige `llama/qwen3-coder`.
+
+#### Cambiar el modelo de OpenCode
+
+`opencode.json` contiene el nombre simbólico del modelo que OpenCode muestra
+y usa. Si cambias `API_MODEL` en `models.conf` y quieres que OpenCode refleje
+el nuevo modelo:
+
+1. Edita `opencode.json`:
+   - `"model": "llama/<nombre-simbólico>"` (el que usará OpenCode por defecto).
+   - En `"providers" → "llama" → "models"`, añade o reemplaza la entrada con
+     el `<nombre-simbólico>` elegido y ajusta `"name"` para que sea legible.
+   - `"modelID"` debe seguir siendo `"local-model"`, ya que llama-server
+     ignora el campo y sirve el GGUF que tenga cargado.
+
+2. Si solo quieres cambiar el GGUF subyacente pero conservar el modelo
+   `qwen3-coder` en OpenCode, modifica solo `API_MODEL` en `models.conf` y
+   reinicia con `./llm api`.
 
 Si quieres que OpenCode busque información actual, indícalo en el prompt
 (por ejemplo, "busca en la web primero"). De lo contrario puede no invocar
@@ -201,10 +227,15 @@ Variables disponibles:
   servicio.
 - `NGL`: capas offload a GPU (`auto` por defecto; baja el número si te quedas
   sin VRAM).
-- `CTX`: tamaño de contexto (por defecto 8192).
+- `CTX`: tamaño de contexto (por defecto 32768 para OpenCode/API, 8192 en
+  la documentación anterior).
 - `BATCH`: batch size (por defecto 256).
-- `MODEL`: ruta al GGUF (por defecto `~/Proyectos/llama/models/Qwen3-30B-A3B-Q4_K_M.gguf`).
+- `MODEL`: ruta completa al GGUF; sobrescribe el modelo del modo que estés
+  lanzando.
 - `LLAMA_SERVER`: ruta al binario `llama-server`.
+
+Para cambiar modelos de forma permanente, edita `models.conf` en lugar de
+usar `MODEL`.
 
 Si cambias `SEARXNG_PORT`, recuerda actualizar también `searxng/.env` y
 `agent/web_search.py`.

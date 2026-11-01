@@ -80,9 +80,11 @@ es ejecutar `agent/agent.py` o `./llm cli` contra los servicios activos.
 - **The model name is auto-detected at runtime.** `agent.py` queries
   `llama-server`'s `/v1/models` and uses the loaded GGUF's id, falling back to
   `DEFAULT_MODEL = "local-model"` when the server is unreachable (llama-server
-  ignores the request's model field anyway). El único perfil soportado es
-  Qwen3-30B-A3B-Q4_K_M, lanzado por `./llm`. Para ajustar capas/contexto usa
-  las variables `NGL`, `CTX` y `BATCH` (p. ej. `NGL=20 ./llm cli`).
+  ignores the request's model field anyway). Los modelos por modo se configuran
+  en `models.conf` (`API_MODEL`, `WEB_MODEL`, `CLI_MODEL`) y `./llm` arranca
+  `llama-server` con el que corresponda, reiniciando si el cargado no coincide.
+  Para ajustar capas/contexto usa las variables `NGL`, `CTX` y `BATCH`
+  (p. ej. `NGL=20 ./llm web`).
 - **The Qwen3-30B profile is intentionally conservative.** `-ngl auto` puts as
   many layers as fit in VRAM and leaves the rest in CPU/RAM; context 8192 and
   batch 256 limit additional memory use. If startup still runs out of VRAM,
@@ -130,13 +132,16 @@ local a través del servidor MCP `mcp/web_search.py`. OpenCode orquesta el
 bucle de herramientas: decide cuándo buscar, cuándo leer archivos, cuándo
 ejecutar un comando, etc.
 
-Para que esto funcione, `./llm` arranca llama-server con
+Para que esto funcione, `./llm api` arranca llama-server con
 `Qwen3-Coder-30B-A3B-Instruct.Q4_K_M` y una ventana de contexto de 32768
 tokens. El modelo Coder sigue los esquemas de tool calls mucho mejor que el
 modelo de chat general y es el que la comunidad usa con agentes locales.
 
 ```bash
 # Desde la raíz del repo, donde se encuentra opencode.json.
+./llm api
+
+# En otra terminal:
 opencode run "¿Qué novedades hay hoy sobre inteligencia artificial?"
 ```
 
@@ -150,9 +155,23 @@ Elige `llama/qwen3-coder`. Si quieres que busque información actual,
 indícalo explícitamente en el prompt (por ejemplo, "busca en la web
 primero"); de lo contrario OpenCode puede no invocar `web_search`.
 
+### Cambiar el modelo de OpenCode
+
+El perfil de OpenCode está en `opencode.json`. Si cambias `API_MODEL` en
+`models.conf` y quieres que OpenCode muestre el nuevo modelo:
+
+1. Actualiza `"model"` con el nombre simbólico que quieras.
+2. Añade o edita la entrada correspondiente bajo
+   `"providers" → "llama" → "models"`.
+3. Mantén `"modelID": "local-model"` porque llama-server ignora ese campo.
+
+Si solo cambias el GGUF pero conservas el nombre `qwen3-coder` en OpenCode,
+modifica solo `API_MODEL` en `models.conf` y reinicia `./llm api`.
+
 ### Volver al modelo de chat general
 
-Si prefieres usar el Qwen3-30B general para CLI/Open WebUI, arranca con:
+Si prefieres usar el Qwen3-30B general para CLI/Open WebUI, usa los modos
+`cli` o `web` (configurables en `models.conf`) o arranca con:
 
 ```bash
 MODEL="$HOME/Proyectos/llama/models/Qwen3-30B-A3B-Q4_K_M.gguf" ./llm cli
