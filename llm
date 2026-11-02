@@ -35,6 +35,7 @@ DEFAULT_MODELS_DIR="$HOME/Proyectos/llama/models"
 DEFAULT_API_MODEL="Qwen3-Coder-30B-A3B-Instruct.Q4_K_M.gguf"
 DEFAULT_WEB_MODEL="Qwen3-30B-A3B-Q4_K_M.gguf"
 DEFAULT_CLI_MODEL="Qwen3-30B-A3B-Q4_K_M.gguf"
+DEFAULT_CLI_LONG_MODEL="Qwen3-14B-Q5_K_M.gguf"
 
 # shellcheck disable=SC1090
 [ -f "${MODELS_CONF}" ] && source "${MODELS_CONF}"
@@ -43,6 +44,7 @@ MODELS_DIR="${MODELS_DIR:-${DEFAULT_MODELS_DIR}}"
 API_MODEL="${API_MODEL:-${DEFAULT_API_MODEL}}"
 WEB_MODEL="${WEB_MODEL:-${DEFAULT_WEB_MODEL}}"
 CLI_MODEL="${CLI_MODEL:-${DEFAULT_CLI_MODEL}}"
+CLI_LONG_MODEL="${CLI_LONG_MODEL:-${DEFAULT_CLI_LONG_MODEL}}"
 
 # Modo activo: se establece antes de arrancar llama-server (api/web/cli).
 CURRENT_MODE=""
@@ -50,6 +52,8 @@ CURRENT_MODE=""
 LLAMA_SERVER="${LLAMA_SERVER:-$HOME/Proyectos/llama/src/llama.cpp/build/bin/llama-server}"
 
 NGL="${NGL:-auto}"
+# Detectamos si el usuario fijó CTX explícitamente para no pisarla en cli-long.
+CTX_EXPLICIT="${CTX:-}"
 CTX="${CTX:-32768}"
 BATCH="${BATCH:-256}"
 SLOTS="${SLOTS:-1}"
@@ -125,10 +129,11 @@ resolve_model() {
     fi
 
     case "${mode}" in
-        api)  resolved="${API_MODEL}" ;;
-        web)  resolved="${WEB_MODEL}" ;;
-        cli)  resolved="${CLI_MODEL}" ;;
-        *)    resolved="${API_MODEL}" ;;
+        api)       resolved="${API_MODEL}" ;;
+        web)       resolved="${WEB_MODEL}" ;;
+        cli)       resolved="${CLI_MODEL}" ;;
+        cli-long)  resolved="${CLI_LONG_MODEL}" ;;
+        *)         resolved="${API_MODEL}" ;;
     esac
 
     # Si no contiene barras, se asume relativo a MODELS_DIR.
@@ -535,10 +540,11 @@ run_cli() {
 }
 
 print_models() {
-    local mode api_file web_file cli_file loaded current
+    local mode api_file web_file cli_file cli_long_file loaded current
     api_file="${API_MODEL}"
     web_file="${WEB_MODEL}"
     cli_file="${CLI_MODEL}"
+    cli_long_file="${CLI_LONG_MODEL}"
     loaded="$(llama_loaded_model)"
     if [ -n "${loaded}" ]; then
         loaded="$(basename "${loaded}")"
@@ -548,6 +554,7 @@ print_models() {
     printf "  API: %s\n" "${api_file}"
     printf "  Web: %s\n" "${web_file}"
     printf "  CLI: %s\n" "${cli_file}"
+    printf "  CLI-long: %s\n" "${cli_long_file}"
 
     if [ -n "${loaded}" ]; then
         printf "\nModelo cargado en llama-server: %s\n" "${loaded}"
@@ -567,6 +574,7 @@ print_models() {
         [ "${model}" = "${api_file}" ] && current=" [API]"
         [ "${model}" = "${web_file}" ] && current=" [Web]"
         [ "${model}" = "${cli_file}" ] && current=" [CLI]"
+        [ "${model}" = "${cli_long_file}" ] && current=" [CLI-long]"
         if [ -n "${loaded}" ] && { [ "${model}" = "${loaded}" ] || [ "local-model" = "${loaded}" ]; }; then
             current="${current} (cargado)"
         fi
@@ -617,6 +625,17 @@ run_cli_mode() {
     run_cli
 }
 
+run_cli_long_mode() {
+    CURRENT_MODE="cli-long"
+    # En cli-long usamos el contexto máximo útil a menos que el usuario haya fijado CTX.
+    if [ -z "${CTX_EXPLICIT}" ]; then
+        CTX=40960
+    fi
+    start_llama
+    start_searxng
+    run_cli
+}
+
 # ---------------------------------------------------------------------------
 # Entrada principal
 # ---------------------------------------------------------------------------
@@ -624,6 +643,9 @@ run_cli_mode() {
 case "${1:-}" in
     cli)
         run_cli_mode
+        ;;
+    cli-long)
+        run_cli_long_mode
         ;;
     api)
         run_api
@@ -644,9 +666,10 @@ case "${1:-}" in
         webui_reset
         ;;
     *)
-        echo "Uso: $0 {cli|api|web|models|stop|status|webui-reset}"
+        echo "Uso: $0 {cli|cli-long|api|web|models|stop|status|webui-reset}"
         echo ""
         echo "  cli          Terminal interactiva (llama-server + SearXNG + agente)"
+        echo "  cli-long     Terminal interactiva para contextos largos (modelo ligero, CTX=40960)"
         echo "  api          Solo API en ${API_URL} (modelo Coder para OpenCode)"
         echo "  web          Navegador con Open WebUI (modelo de chat general)"
         echo "  models       Listar modelos configurados y disponibles"

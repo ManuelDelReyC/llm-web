@@ -29,6 +29,7 @@ con un error.
 
 ```bash
 ./llm cli          # Terminal interactiva (llama-server + SearXNG + agente)
+./llm cli-long     # Terminal interactiva para contextos largos (modelo ligero, CTX=40960)
 ./llm api          # Solo API en http://127.0.0.1:8090
 ./llm web          # Navegador con Open WebUI (todo el stack)
 ./llm status       # Ver qué servicios están corriendo

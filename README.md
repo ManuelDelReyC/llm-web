@@ -46,12 +46,13 @@ selección puntual sin editar el fichero, usa `MODEL=/ruta/modelo.gguf`.
 ## Uso rápido
 
 ```bash
-./llm cli     # Terminal interactiva
-./llm api     # Solo API (modelo Coder, para OpenCode u otras apps)
-./llm web     # Navegador con Open WebUI (modelo de chat general)
-./llm models  # Listar modelos configurados y disponibles
-./llm status  # Ver qué está corriendo
-./llm stop    # Parar todo
+./llm cli      # Terminal interactiva
+./llm cli-long # Terminal interactiva para contextos largos (14B, CTX=40960)
+./llm api      # Solo API (modelo Coder, para OpenCode u otras apps)
+./llm web      # Navegador con Open WebUI (modelo de chat general)
+./llm models   # Listar modelos configurados y disponibles
+./llm status   # Ver qué está corriendo
+./llm stop     # Parar todo
 ```
 
 Cada comando arranca solo los servicios que necesita, espera a que estén
@@ -61,6 +62,7 @@ quedan en primer plano; presiona `Ctrl+C` para detener todo.
 | Modo | Servicios levantados | Modelo por defecto |
 | --- | --- | --- |
 | `cli` | llama-server + SearXNG + agente interactivo | Qwen3-30B-A3B-Q4_K_M |
+| `cli-long` | llama-server + SearXNG + agente interactivo | Qwen3-14B-Q5_K_M |
 | `api` | llama-server + SearXNG + API en `http://127.0.0.1:8090` | Qwen3-Coder-30B-A3B |
 | `web` | llama-server + SearXNG + API (`0.0.0.0:8090`) + Open WebUI | Qwen3-30B-A3B-Q4_K_M |
 
@@ -217,6 +219,12 @@ LLAMA_PORT=8080 SEARXNG_PORT=8081 API_PORT=8090 WEBUI_PORT=3000 ./llm web
 # Reducir carga de VRAM (mueve capas a RAM)
 NGL=20 CTX=4096 ./llm cli
 
+# Contexto largo: usar el modo cli-long (14B, CTX=40960)
+./llm cli-long
+
+# Equivalente manual con otro modelo ligero
+MODEL=$HOME/Proyectos/llama/models/Qwen3-8B-Q4_K_M.gguf CTX=40960 ./llm cli
+
 # Rutas alternativas
 MODEL=/ruta/al/modelo.gguf LLAMA_SERVER=/ruta/a/llama-server ./llm api
 ```
@@ -227,15 +235,24 @@ Variables disponibles:
   servicio.
 - `NGL`: capas offload a GPU (`auto` por defecto; baja el número si te quedas
   sin VRAM).
-- `CTX`: tamaño de contexto (por defecto 32768 para OpenCode/API, 8192 en
-  la documentación anterior).
+- `CTX`: tamaño de contexto. Por defecto 32768; el máximo útil es **40960**
+  (los GGUF de Qwen3 están entrenados a ese valor y `llama.cpp` capea `n_ctx`
+  aunque se pida más).
 - `BATCH`: batch size (por defecto 256).
+- `SLOTS`: número de slots paralelos (por defecto 1). Con `SLOTS=1` una sola
+  petición puede usar todo el contexto.
 - `MODEL`: ruta completa al GGUF; sobrescribe el modelo del modo que estés
   lanzando.
 - `LLAMA_SERVER`: ruta al binario `llama-server`.
 
 Para cambiar modelos de forma permanente, edita `models.conf` en lugar de
 usar `MODEL`.
+
+El modo `cli-long` existe precisamente para contextos cercanos a 40960 tokens:
+el modelo 30B es muy lento con tanta ventana porque el KV cache no cabe en
+16 GB de VRAM, mientras que el 14B Q5_K_M permite usar el contexto máximo de
+forma fluida. Puedes ajustar el modelo ligero con `CLI_LONG_MODEL` en
+`models.conf`.
 
 Si cambias `SEARXNG_PORT`, recuerda actualizar también `searxng/.env` y
 `agent/web_search.py`.
