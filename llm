@@ -52,6 +52,7 @@ LLAMA_SERVER="${LLAMA_SERVER:-$HOME/Proyectos/llama/src/llama.cpp/build/bin/llam
 NGL="${NGL:-auto}"
 CTX="${CTX:-32768}"
 BATCH="${BATCH:-256}"
+SLOTS="${SLOTS:-1}"
 
 mkdir -p "${LOG_DIR}" "${PID_DIR}"
 
@@ -215,7 +216,7 @@ start_llama() {
 
     log "🚀 Iniciando llama-server (${mode}) con $(basename "${MODEL}") en ${LLAMA_URL}..."
     log "   Capas GPU: ${NGL} (auto = tantas como quepan)"
-    log "   Contexto: ${CTX} | Batch: ${BATCH}"
+    log "   Contexto: ${CTX} | Batch: ${BATCH} | Slots: ${SLOTS}"
 
     cd "${REPO_DIR}"
     # shellcheck disable=SC2086
@@ -225,6 +226,7 @@ start_llama() {
         --port "${LLAMA_PORT}" \
         -ngl "${NGL}" \
         -c "${CTX}" \
+        -np "${SLOTS}" \
         -b "${BATCH}" \
         -ub 128 \
         -t 10 \
@@ -655,7 +657,7 @@ case "${1:-}" in
         echo "Configuración: ${MODELS_CONF}"
         echo "Variables de entorno útiles:"
         echo "  LLAMA_PORT, SEARXNG_PORT, API_PORT, WEBUI_PORT"
-        echo "  NGL, CTX, BATCH (perfil del modelo 30B)"
+        echo "  NGL, CTX, BATCH, SLOTS (perfil del modelo; SLOTS=1 maximiza contexto por petición)"
         echo "  MODEL=/ruta/modelo.gguf (sobrescribe la configuración por modo)"
         exit 1
         ;;

@@ -86,10 +86,16 @@ es ejecutar `agent/agent.py` o `./llm cli` contra los servicios activos.
   Para ajustar capas/contexto usa las variables `NGL`, `CTX` y `BATCH`
   (p. ej. `NGL=20 ./llm web`).
 - **The Qwen3-30B profile is intentionally conservative.** `-ngl auto` puts as
-  many layers as fit in VRAM and leaves the rest in CPU/RAM; context 8192 and
-  batch 256 limit additional memory use. If startup still runs out of VRAM,
-  pass an explicit lower layer count, e.g. `NGL=20 ./llm cli`.
+  many layers as fit in VRAM and leaves the rest in CPU/RAM; context 32768 and
+  batch 256 limit additional memory use. The server uses `SLOTS=1` by default
+  so a single request can use the full context. If startup still runs out of
+  VRAM, pass an explicit lower layer count, e.g. `NGL=20 ./llm cli`.
   Lowering `ngl` makes it slower but moves more layers to RAM.
+- **Maximum useful context is 40960 tokens.** The default GGUFs have a training
+  context of 40960; `llama.cpp` caps `n_ctx` to that value even if you set
+  `CTX` higher. For prompts near that limit the 30B model is very slow because
+  the KV cache does not fit in 16 GB VRAM; use the lighter 14B model instead:
+  `MODEL=$HOME/Proyectos/llama/models/Qwen3-14B-Q5_K_M.gguf CTX=40960 ./llm cli`.
 - **SearXNG must have the `json` format enabled**, or `web_search.py` gets a
   403. It is enabled in `searxng/core-config/settings.yml`
   (`search.formats: [html, json]`). That dir is bind-mounted to
